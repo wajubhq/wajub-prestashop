@@ -1,0 +1,627 @@
+/**
+ * Wajub for PrestaShop
+ *
+ * @author    Wajub
+ * @copyright Since 2026 Wajub
+ * @license   https://opensource.org/licenses/MIT MIT License
+ */
+/*
+ * The checkout's Wajub options and the order confirmation page: the payment
+ * box that holds Wajub's payment form (Mobile Money, Card), the lines under
+ * an option (test mode, "Secured by Wajub"), and the panel that follows a
+ * payment being confirmed. A port of the WordPress plugin's checkout.css and
+ * checkout-fields.css.
+ *
+ * Built to sit inside any theme: text inherits the theme's font and colour,
+ * lines and fills are translucent so they work on light and dark themes, and
+ * a theme can restyle the accents through custom properties set on any
+ * parent, each read with a default:
+ *   --wajub-accent     focus rings, the waiting spinner, accents
+ *   --wajub-radius     corners
+ *   --wajub-border     borders
+ *   --wajub-surface    tinted backgrounds
+ *   --wajub-success, --wajub-error, --wajub-warning   status colours
+ * Logical properties only, so a right-to-left shop reads it the right way
+ * round, but for the frame's `height`, the property Wajub.js sets. The
+ * payment box's own properties:
+ *   --wajub-fields-reserve         the room the form holds while it loads
+ *   --wajub-fields-skeleton-border, -background, -radius, -ink
+ *                                  the skeleton's input, in the site's own
+ *                                  input style (set by fields-core.js)
+ *   --wajub-fields-action-height   a height the form never goes under while
+ *                                  it shows a follow-up step
+ */
+
+/* --- Payment box ----------------------------------------------------------- */
+
+.wajub-payment-fields > :first-child {
+  margin-top: 0;
+}
+
+.wajub-payment-fields > :last-child {
+  margin-bottom: 0;
+}
+
+.wajub-payment-fields p,
+.wajub-payment-info p {
+  margin: 0 0 0.75em;
+}
+
+.wajub-secured {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  font-size: 0.875em;
+}
+
+/* The lock, drawn in the text's colour: a mask rather than an inline <svg>,
+   which PrestaShop's option forms do not keep (it reads them with libxml's
+   HTML parser). */
+.wajub-secured__icon {
+  display: inline-block;
+  flex: none;
+  width: 1em;
+  height: 1em;
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='11' width='16' height='10' rx='2'/%3E%3Cpath d='M8 11V7a4 4 0 0 1 8 0v4'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4' y='11' width='16' height='10' rx='2'/%3E%3Cpath d='M8 11V7a4 4 0 0 1 8 0v4'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+@media (forced-colors: active) {
+  .wajub-secured__icon {
+    background-color: CanvasText;
+  }
+}
+
+/* Fixed colours, readable on light and dark themes alike (contrast 7.8:1). */
+.wajub-test-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45em;
+  padding: 0.3em 0.7em;
+  border: 1px solid #f59e0b;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #713f12;
+  font-size: 0.8125em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.wajub-test-badge__dot {
+  flex: none;
+  width: 0.5em;
+  height: 0.5em;
+  border-radius: 50%;
+  background: #d97706;
+}
+
+/* --- The rest of the checkout while the payment is under way ---------------- */
+
+.wajub-locked {
+  opacity: 0.6;
+  pointer-events: none;
+  user-select: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .wajub-locked {
+    transition: opacity 0.2s ease;
+  }
+}
+
+/* PrestaShop's "Place order", while the payer pays in the form: the payment
+   goes on in the box above it. */
+.wajub-fields-paying #payment-confirmation button[data-wajub-fields-disabled] {
+  cursor: progress;
+}
+
+/* The form posted by "Place order": hidden fields only. */
+.wajub-payment-form {
+  margin: 0;
+}
+
+/* The box under the option's description, with room before the next option. */
+.wajub-payment-info {
+  margin-block-end: 1rem;
+}
+
+.wajub-payment-info > :last-child {
+  margin-block-end: 0;
+}
+
+/* --- The payment form ------------------------------------------------------ */
+
+.wajub-fields__group {
+  min-inline-size: 0;
+  margin-block: 0 0.75em;
+  margin-inline: 0;
+  padding: 0;
+  border: 0;
+}
+
+/* Themes style legends; this one is for screen readers only. So is the
+   "Loading" line, while the skeleton shows it. */
+.wajub-sr-only,
+.wajub-fields .wajub-fields__status.is-sr-only {
+  position: absolute;
+  overflow: hidden;
+  clip: rect(1px, 1px, 1px, 1px);
+  clip-path: inset(50%);
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  white-space: nowrap;
+  word-wrap: normal;
+}
+
+/*
+ * The form's room, as the frame lays it out (px: the frame's sizes are its
+ * own, whatever the theme's root font size): a label (24px), its input
+ * (4px under it, 44px), and for Mobile Money the one-line hint (12px under
+ * it, 20px); for a card two more rows of label and input, 16px apart (the
+ * expiry date and security code, then the cardholder's name). With the
+ * frame's 2px of padding at each end.
+ */
+.wajub-payment-fields[data-wajub-component="card"] {
+  --wajub-fields-reserve: 252px;
+}
+
+.wajub-fields__mount {
+  position: relative;
+  inline-size: 100%;
+  min-block-size: 0;
+  /* Clear of a sticky header when the page scrolls to the form. */
+  scroll-margin-block-start: 100px;
+}
+
+/* While the form loads: its room, held. */
+.wajub-fields__mount.is-loading {
+  min-block-size: var(--wajub-fields-reserve, 108px);
+}
+
+/* And from the first render, before the script has run, where scripts run:
+   without them the box says the payer pays on Wajub's page (noscript), with
+   no empty room above it. A browser that does not know this query holds the
+   room once the script runs. */
+@media (scripting: enabled) {
+  .wajub-fields__mount:empty {
+    min-block-size: var(--wajub-fields-reserve, 108px);
+  }
+}
+
+.wajub-fields__mount[hidden] {
+  display: none;
+}
+
+.wajub-fields__mount:focus {
+  outline: none;
+}
+
+.wajub-fields__mount iframe {
+  display: block;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  /* The frame's own height (Wajub.js sets it as the frame resizes), not
+     Wajub.js's 120px floor, which left room under a shorter form. */
+  min-block-size: 0 !important;
+}
+
+/* Loading: the frame stays on the page (it lays itself out and measures
+   itself), unseen, in the room held for it until it says how tall it is. */
+.wajub-fields__mount.is-loading iframe {
+  block-size: var(--wajub-fields-reserve, 108px);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/*
+ * A follow-up step (fields-core.js toggles .is-action) is drawn over the
+ * form, and the frame measures it and grows to it. A store can still set a
+ * height the frame never goes under meanwhile.
+ */
+.wajub-fields__mount.is-action iframe {
+  min-block-size: var(--wajub-fields-action-height, 0px) !important;
+}
+
+/* The skeleton: the form's outline in the site's own input style, over the
+   room held, never in the payer's way. */
+.wajub-fields__skeleton {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 2px;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+}
+
+.wajub-fields__skeleton--card {
+  gap: 16px;
+}
+
+.wajub-fields__mount.is-loading > .wajub-fields__skeleton {
+  opacity: 1;
+  visibility: visible;
+}
+
+.wajub-fields__skeleton-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-inline-size: 0;
+}
+
+.wajub-fields__skeleton-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.wajub-fields__skeleton-label,
+.wajub-fields__skeleton-hint {
+  display: block;
+  border-radius: 3px;
+  background-color: rgba(128, 128, 128, 0.18);
+  background-color: color-mix(in srgb, var(--wajub-fields-skeleton-ink, currentColor) 14%, transparent);
+}
+
+.wajub-fields__skeleton-label {
+  block-size: 10px;
+  inline-size: min(8rem, 45%);
+  margin-block: 7px;
+}
+
+.wajub-fields__skeleton-hint {
+  block-size: 8px;
+  inline-size: 70%;
+  margin-block: 6px;
+}
+
+.wajub-fields__skeleton-input {
+  display: block;
+  box-sizing: border-box;
+  block-size: 44px;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  border-color: var(--wajub-fields-skeleton-border, rgba(128, 128, 128, 0.4));
+  border-radius: var(--wajub-fields-skeleton-radius, 6px);
+  background-color: var(--wajub-fields-skeleton-background, transparent);
+}
+
+/* What the payer needs to fix or know: next to the form, never in its way. */
+.wajub-payment-fields .wajub-fields__error {
+  margin-block: 0 0.75em;
+  padding-inline-start: 0.6em;
+  border-inline-start: 3px solid var(--wajub-error, var(--wajub-danger, #b32d2e));
+  font-weight: 600;
+}
+
+.wajub-payment-fields .wajub-fields__error.is-info {
+  border-inline-start-color: var(--wajub-accent, #1f6f50);
+  font-weight: normal;
+}
+
+.wajub-fields__error[hidden],
+.wajub-fields__actions[hidden] {
+  display: none;
+}
+
+/* Empty, the alert takes no room but stays on the page, so that its words
+   are read out when they arrive. */
+.wajub-payment-fields .wajub-fields__error:empty {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.wajub-fields__error:focus {
+  outline: none;
+}
+
+.wajub-fields__error:focus-visible {
+  outline: 2px solid var(--wajub-accent, #1f6f50);
+  outline-offset: 2px;
+}
+
+/* Empty, it takes no room but stays on the page: a live region that is not
+   displayed may not be announced when its text arrives. */
+.wajub-payment-fields .wajub-fields__status:empty {
+  margin: 0;
+}
+
+.wajub-payment-fields .wajub-fields__status {
+  font-weight: 600;
+}
+
+.wajub-fields__hint {
+  font-size: 0.9375em;
+}
+
+.wajub-fields__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5em 1em;
+  margin-block: 0 0.75em;
+}
+
+/* Without the "Secured by Wajub" line (turned off by the merchant), nothing
+   follows the form but what may show under it: each of those keeps its
+   space above it instead of the form below, so the box ends with the last
+   thing shown, with no space under it. */
+.wajub-fields--plain > .wajub-fields__group {
+  margin-block-end: 0;
+}
+
+/* The alert empty, as it mostly is (it stays on the page), takes no room:
+   only an alert with words gets the space. */
+.wajub-payment-fields.wajub-fields--plain > .wajub-fields__error:not(:empty),
+.wajub-payment-fields.wajub-fields--plain > .wajub-fields__status:not(:empty),
+.wajub-payment-fields.wajub-fields--plain > .wajub-fields__actions {
+  margin-block: 0.75em 0;
+}
+
+.wajub-fields__retry[disabled] {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.wajub-fields__hosted {
+  text-underline-offset: 0.15em;
+}
+
+.wajub-fields__retry:focus-visible,
+.wajub-fields__hosted:focus-visible {
+  outline: 2px solid var(--wajub-accent, #1f6f50);
+  outline-offset: 2px;
+}
+
+/*
+ * Unless the payer asked for less motion: the skeleton breathes, the frame
+ * fades in as it fades out, and the box follows the frame's height (set
+ * inline by Wajub.js, hence `height`) smoothly instead of jumping.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .wajub-fields__mount {
+    transition: min-block-size 0.2s ease;
+  }
+
+  .wajub-fields__mount iframe {
+    transition:
+      height 0.2s ease,
+      min-height 0.2s ease,
+      opacity 0.2s ease;
+  }
+
+  .wajub-fields__skeleton {
+    transition:
+      opacity 0.2s ease,
+      visibility 0s linear 0.2s;
+  }
+
+  .wajub-fields__mount.is-loading > .wajub-fields__skeleton {
+    transition: opacity 0.2s ease;
+  }
+
+  .wajub-fields__mount.is-loading .wajub-fields__skeleton-label,
+  .wajub-fields__mount.is-loading .wajub-fields__skeleton-hint,
+  .wajub-fields__mount.is-loading .wajub-fields__skeleton-input {
+    animation: wajub-fields-pulse 1.6s ease-in-out infinite;
+  }
+}
+
+@keyframes wajub-fields-pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* --- Order confirmation: waiting for the payment ----------------------------- */
+
+.wajub-order-status {
+  display: flex;
+  gap: 1em;
+  margin: 0 0 2em;
+  padding: 1em;
+  border: 1px solid var(--wajub-border, var(--wajub-line, rgba(127, 127, 127, 0.45)));
+  border-inline-start: 4px solid var(--wajub-accent, #1f6f50);
+  border-radius: var(--wajub-radius, 8px);
+  background: var(--wajub-surface, var(--wajub-tint, rgba(127, 127, 127, 0.06)));
+}
+
+@media (min-width: 600px) {
+  .wajub-order-status {
+    padding: 1.25em 1.5em;
+  }
+}
+
+.wajub-order-status--paid {
+  border-inline-start-color: var(--wajub-success, #15803d);
+}
+
+.wajub-order-status--failed {
+  border-inline-start-color: var(--wajub-error, var(--wajub-danger, #b91c1c));
+}
+
+.wajub-order-status--timeout {
+  border-inline-start-color: var(--wajub-warning, #b45309);
+}
+
+/* Part of the order paid: nothing to wait for, the rest is the payer's to pay. */
+.wajub-order-status--partial {
+  border-inline-start-color: var(--wajub-warning, #b45309);
+}
+
+.wajub-order-status--partial .wajub-order-status__icon {
+  display: none;
+}
+
+/* What the order received already, in the waiting panel and the payment boxes. */
+.wajub-order-status__paid,
+.wajub-paid-so-far {
+  margin: 0 0 0.6em;
+  font-weight: 600;
+}
+
+.wajub-order-status__icon {
+  flex: none;
+  padding-top: 0.2em;
+}
+
+.wajub-order-status__body {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.wajub-order-status__title {
+  margin: 0 0 0.4em;
+  font-size: 1.25em;
+  line-height: 1.3;
+}
+
+.wajub-order-status__title:focus {
+  outline: none;
+}
+
+.wajub-order-status__lead,
+.wajub-order-status__live,
+.wajub-order-status__actions {
+  margin: 0 0 0.6em;
+}
+
+/* Logical margins: in a right-to-left store the list markers sit on the right. */
+.wajub-order-status__steps {
+  margin-block: 0 0.75em;
+  margin-inline: 1.25em 0;
+  padding: 0;
+}
+
+.wajub-order-status__steps li {
+  margin: 0 0 0.25em;
+}
+
+.wajub-order-status__live {
+  font-weight: 600;
+}
+
+.wajub-order-status__actions:last-child,
+.wajub-order-status__live:last-child {
+  margin-bottom: 0;
+}
+
+/* Its actions side by side, one under the other on a narrow screen. Only
+   once shown: a flex box would undo `hidden`. */
+.wajub-order-status__actions:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5em 1.25em;
+}
+
+/* "Check again" while its check runs: still there, and still focused, but inactive. */
+.wajub-order-status .wajub-button[aria-disabled="true"] {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.wajub-spinner {
+  display: block;
+  width: 1.75em;
+  height: 1.75em;
+  border: 3px solid rgba(127, 127, 127, 0.3);
+  border-top-color: var(--wajub-accent, #1f6f50);
+  border-radius: 50%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .wajub-order-status--waiting .wajub-spinner {
+    animation: wajub-spin 0.9s linear infinite;
+  }
+}
+
+/* Once the payment has an answer, the spinner stops turning and says how it ended. */
+.wajub-order-status--paid .wajub-spinner,
+.wajub-order-status--failed .wajub-spinner,
+.wajub-order-status--timeout .wajub-spinner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.wajub-order-status--paid .wajub-spinner {
+  border-color: var(--wajub-success, #15803d);
+  color: var(--wajub-success, #15803d);
+}
+
+.wajub-order-status--paid .wajub-spinner::after {
+  content: "\2713";
+}
+
+.wajub-order-status--failed .wajub-spinner {
+  border-color: var(--wajub-error, var(--wajub-danger, #b91c1c));
+  color: var(--wajub-error, var(--wajub-danger, #b91c1c));
+}
+
+.wajub-order-status--failed .wajub-spinner::after {
+  content: "\2715";
+}
+
+.wajub-order-status--timeout .wajub-spinner {
+  border-color: var(--wajub-warning, #b45309);
+  color: var(--wajub-warning, #b45309);
+}
+
+.wajub-order-status--timeout .wajub-spinner::after {
+  content: "!";
+}
+
+@keyframes wajub-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* --- Payment reference ------------------------------------------------------ */
+
+.wajub-payment-reference {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5em;
+}
+
+.wajub-payment-reference__value {
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.wajub-copy {
+  min-height: 24px;
+  padding: 0.2em 0.75em;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 0.875em;
+  cursor: pointer;
+}
+
+.wajub-copy-feedback {
+  font-size: 0.875em;
+}
+
+
+@media (forced-colors: active) {
+  .wajub-test-badge,
+  .wajub-order-status {
+    border-color: CanvasText;
+  }
+}

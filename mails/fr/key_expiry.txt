@@ -1,0 +1,9 @@
+Reconnectez la boutique avec Wajub
+
+{message}
+
+{where}
+
+{advice}
+
+{shop_name} - {shop_url}

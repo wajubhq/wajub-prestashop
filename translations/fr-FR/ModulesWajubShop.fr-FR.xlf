@@ -1,0 +1,571 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xliff xmlns="urn:oasis:names:tc:xliff:document:1.2" version="1.2">
+  <file original="modules/wajub/controllers/front/pay.php" source-language="en-US" target-language="fr-FR" datatype="plaintext">
+    <body>
+      <trans-unit id="20160a4c8119cfe94e1faae6adeb3449">
+        <source>We could not check your payment with Wajub. Please try again in a moment.</source>
+        <target>Nous n’avons pas pu vérifier votre paiement auprès de Wajub. Veuillez réessayer dans un instant.</target>
+      </trans-unit>
+    </body>
+  </file>
+  <file original="modules/wajub/controllers/front/validation.php" source-language="en-US" target-language="fr-FR" datatype="plaintext">
+    <body>
+      <trans-unit id="7eabc52b64980af87505425e717dd91a">
+        <source>Your order is being placed. Please wait a moment.</source>
+        <target>Votre commande est en cours de validation. Veuillez patienter un instant.</target>
+      </trans-unit>
+    </body>
+  </file>
+  <file original="modules/wajub/src/Checkout/CheckoutStrings.php" source-language="en-US" target-language="fr-FR" datatype="plaintext">
+    <body>
+      <trans-unit id="aa1405dce30c6820c88ed4709a6d09ee">
+        <source>Mobile Money payment details</source>
+        <target>Informations de paiement Mobile Money</target>
+      </trans-unit>
+      <trans-unit id="cc119a6bebddeb492d7529f4668d5324">
+        <source>Card payment details</source>
+        <target>Informations de paiement par carte</target>
+      </trans-unit>
+      <trans-unit id="ab116d52ec2aa15f6cc3c5ff66deb399">
+        <source>Payment details</source>
+        <target>Informations de paiement</target>
+      </trans-unit>
+      <trans-unit id="630b4f73c4e21d02bb4d1b6e28819ea8">
+        <source>Secure Mobile Money payment form</source>
+        <target>Formulaire de paiement Mobile Money sécurisé</target>
+      </trans-unit>
+      <trans-unit id="9939a68ff32c0109feddb54a37f24abf">
+        <source>Secure card payment form</source>
+        <target>Formulaire de paiement par carte sécurisé</target>
+      </trans-unit>
+      <trans-unit id="1d4d8efec067950717498f8473a36d17">
+        <source>Secure payment form</source>
+        <target>Formulaire de paiement sécurisé</target>
+      </trans-unit>
+      <trans-unit id="3f84a116ba9876d6e7d090d6e6a3f8a1">
+        <source>Enter the Mobile Money number to pay with.</source>
+        <target>Saisissez le numéro Mobile Money avec lequel payer.</target>
+      </trans-unit>
+      <trans-unit id="f815e62d04f171601f18472556167d0d">
+        <source>Enter your card details to pay.</source>
+        <target>Saisissez les informations de votre carte pour payer.</target>
+      </trans-unit>
+      <trans-unit id="7a2cf37c586a114f5bee7047d01e75a8">
+        <source>Complete your payment details to pay.</source>
+        <target>Complétez vos informations de paiement pour payer.</target>
+      </trans-unit>
+      <trans-unit id="d0fc60886528d2ad2b7cd9d8772b92a6">
+        <source>Approve the payment on your phone: your operator sends you a request.</source>
+        <target>Validez le paiement sur votre téléphone : votre opérateur vous envoie une demande.</target>
+      </trans-unit>
+      <trans-unit id="02e2a18e0420ecc3c67a8d47a42269b1">
+        <source>Complete the payment in the form above.</source>
+        <target>Finalisez le paiement dans le formulaire ci-dessus.</target>
+      </trans-unit>
+      <trans-unit id="2fd6d1f4cacd10bbd9d5491ce3a77ef9">
+        <source>Loading the secure payment form…</source>
+        <target>Chargement du formulaire de paiement sécurisé…</target>
+      </trans-unit>
+      <trans-unit id="e0ef60089e204b175e45a18824b72cbc">
+        <source>Placing your order…</source>
+        <target>Validation de votre commande…</target>
+      </trans-unit>
+      <trans-unit id="c61d9a692780e6868b54b0705ab97291">
+        <source>You will pay on a secure Wajub page, then come back here.</source>
+        <target>Vous paierez sur une page Wajub sécurisée, puis reviendrez ici.</target>
+      </trans-unit>
+      <trans-unit id="25a0257846c0a1c107f9f28b6fb18b9c">
+        <source>The payment form could not be loaded here. Place your order to pay on a secure Wajub page.</source>
+        <target>Le formulaire de paiement n’a pas pu être chargé ici. Passez votre commande pour payer sur une page Wajub sécurisée.</target>
+      </trans-unit>
+      <trans-unit id="375b8a20681f8f107daebdeadeb9a1fd">
+        <source>This payment method cannot be used for this order. Choose another payment method.</source>
+        <target>Ce moyen de paiement ne peut pas être utilisé pour cette commande. Choisissez un autre moyen de paiement.</target>
+      </trans-unit>
+      <trans-unit id="504eb189269c63651428230dccbf3885">
+        <source>This amount cannot be paid with this payment method. Choose another payment method.</source>
+        <target>Ce montant ne peut pas être payé avec ce moyen de paiement. Choisissez un autre moyen de paiement.</target>
+      </trans-unit>
+      <trans-unit id="64a0c24e4ecca19c9de708da8cd6668a">
+        <source>Checking your payment…</source>
+        <target>Vérification de votre paiement…</target>
+      </trans-unit>
+      <trans-unit id="995b4a41c1bb2521101df0e546c90aa6">
+        <source>Payment received. Taking you to your order…</source>
+        <target>Paiement reçu. Redirection vers votre commande…</target>
+      </trans-unit>
+      <trans-unit id="7bbadb8f12a01810c34a23e54babe482">
+        <source>Your payment is still being confirmed. Taking you to your order…</source>
+        <target>Votre paiement est en cours de confirmation. Redirection vers votre commande…</target>
+      </trans-unit>
+      <trans-unit id="4f2226be9cf612ec5cb6e68299eb379b">
+        <source>The payment did not go through. Check the details and try again, or use another payment method.</source>
+        <target>Le paiement n’a pas abouti. Vérifiez les informations et réessayez, ou choisissez un autre moyen de paiement.</target>
+      </trans-unit>
+      <trans-unit id="e1283cd65d06b0b9345c196f0baa223a">
+        <source>Nothing happened? Check the details above, then Try again.</source>
+        <target>Rien ne s’est passé ? Vérifiez les informations ci-dessus, puis cliquez sur Réessayer.</target>
+      </trans-unit>
+      <trans-unit id="d28edc28758323bfe2ff622aa642e70b">
+        <source>Payment not completed. You can try again or choose another payment method.</source>
+        <target>Paiement non finalisé. Vous pouvez réessayer ou choisir un autre moyen de paiement.</target>
+      </trans-unit>
+      <trans-unit id="d73077bd2ce6a7f26861c87955a5a011">
+        <source>Your payment session expired. Place your order again to start a new payment.</source>
+        <target>Votre session de paiement a expiré. Repassez votre commande pour lancer un nouveau paiement.</target>
+      </trans-unit>
+      <trans-unit id="0dc6b4b87e6ed95adef7fd2b176c54ab">
+        <source>The payment was declined or failed. Please try again or choose another payment method.</source>
+        <target>Le paiement a été refusé ou a échoué. Veuillez réessayer ou choisir un autre moyen de paiement.</target>
+      </trans-unit>
+      <trans-unit id="a90895c54d751aa41cfcd2fafc9a20a4">
+        <source>Getting your cart back…</source>
+        <target>Récupération de votre panier…</target>
+      </trans-unit>
+      <trans-unit id="7f7e949eac90852bd5f66bdbc7a6918d">
+        <source>Taking you to the secure Wajub payment page…</source>
+        <target>Redirection vers la page de paiement sécurisée Wajub…</target>
+      </trans-unit>
+      <trans-unit id="f915a95e609bbd517a8a1e7bdcceef37">
+        <source>Try again</source>
+        <target>Réessayer</target>
+      </trans-unit>
+      <trans-unit id="9f90148d229e17819acd7021b5417f4e">
+        <source>Use another payment method</source>
+        <target>Choisir un autre moyen de paiement</target>
+      </trans-unit>
+      <trans-unit id="07d40edbbd60b90e045e1071aa8c52f7">
+        <source>Continue on the secure Wajub page</source>
+        <target>Continuer sur la page Wajub sécurisée</target>
+      </trans-unit>
+      <trans-unit id="610ba1c47fcae0f0078ff0ea2060a07a">
+        <source>Your payment could not be started. Please try again in a moment.</source>
+        <target>Votre paiement n’a pas pu démarrer. Veuillez réessayer dans un instant.</target>
+      </trans-unit>
+      <trans-unit id="bc9de5df7e3699bcf97827ae796288aa">
+        <source>Your payment details were refreshed. Check them, then place your order again.</source>
+        <target>Vos informations de paiement ont été actualisées. Vérifiez-les, puis passez à nouveau votre commande.</target>
+      </trans-unit>
+      <trans-unit id="6555c728bfd9a79c7f0d79f8ec395aa7">
+        <source>Test mode — no real money will be charged</source>
+        <target>Mode Test — aucun argent réel ne sera débité</target>
+      </trans-unit>
+      <trans-unit id="2237cc1980d602ac03f2666197b9893a">
+        <source>Secured by Wajub</source>
+        <target>Sécurisé par Wajub</target>
+      </trans-unit>
+      <trans-unit id="8a725e3663652c52de3283b9dc36b42f">
+        <source>Your payment session expired before it was completed. Your cart is back: place your order again to pay.</source>
+        <target>Votre session de paiement a expiré avant d’être finalisée. Votre panier est de retour : passez à nouveau votre commande pour payer.</target>
+      </trans-unit>
+      <trans-unit id="ea44186a2734689d6cd06b9960a6f867">
+        <source>The payment was declined or failed. Your cart is back: try again or choose another payment method.</source>
+        <target>Le paiement a été refusé ou a échoué. Votre panier est de retour : réessayez ou choisissez un autre moyen de paiement.</target>
+      </trans-unit>
+      <trans-unit id="67f001a7758184a0eed426d3a685fa38">
+        <source>This payment method cannot be used for this order. Your cart is back: choose another payment method.</source>
+        <target>Ce moyen de paiement ne peut pas être utilisé pour cette commande. Votre panier est de retour : choisissez un autre moyen de paiement.</target>
+      </trans-unit>
+      <trans-unit id="7eb29810ae1d6fc326a6a5ea10b63fa5">
+        <source>Your cart is back: choose another payment method.</source>
+        <target>Votre panier est de retour : choisissez un autre moyen de paiement.</target>
+      </trans-unit>
+      <trans-unit id="b96ebc9b212a6f2dd11f29ff7b0b0284">
+        <source>You cancelled the payment. Your cart is back: you can try again or choose another payment method.</source>
+        <target>Vous avez annulé le paiement. Votre panier est de retour : vous pouvez réessayer ou choisir un autre moyen de paiement.</target>
+      </trans-unit>
+      <trans-unit id="8fc30f5c88f802600195e2469888346a">
+        <source>Your payment was not completed, and your cart could not be restored here. Add the products to your cart again to place your order.</source>
+        <target>Votre paiement n’a pas abouti et votre panier n’a pas pu être restauré ici. Ajoutez de nouveau les produits à votre panier pour passer votre commande.</target>
+      </trans-unit>
+      <trans-unit id="3f7813179e87a2350b861f6ea35d73c6">
+        <source>Waiting for the payment to be confirmed…</source>
+        <target>En attente de la confirmation du paiement…</target>
+      </trans-unit>
+      <trans-unit id="cbe701b8da0ead3c572a60947a9280d9">
+        <source>Checking…</source>
+        <target>Vérification en cours…</target>
+      </trans-unit>
+      <trans-unit id="d6aee350296898ef86335d1ef6402741">
+        <source>Payment received</source>
+        <target>Paiement reçu</target>
+      </trans-unit>
+      <trans-unit id="e247491e8d7d2c2382c8711beebff913">
+        <source>Thank you! Updating your order…</source>
+        <target>Merci ! Mise à jour de votre commande…</target>
+      </trans-unit>
+      <trans-unit id="ace2115be95abf09664a0386dc60a6e6">
+        <source>The payment did not go through</source>
+        <target>Le paiement n’a pas abouti</target>
+      </trans-unit>
+      <trans-unit id="d27600e8af517a19b8f17713e91e4c8b">
+        <source>Payment cancelled</source>
+        <target>Paiement annulé</target>
+      </trans-unit>
+      <trans-unit id="5c9fdcfc61d73994a2bf19a7175d7e58">
+        <source>Payment session expired</source>
+        <target>Session de paiement expirée</target>
+      </trans-unit>
+      <trans-unit id="618e8bf08eaf9a0012df120268338352">
+        <source>Your order is saved, but it is not paid.</source>
+        <target>Votre commande est enregistrée, mais elle n’est pas payée.</target>
+      </trans-unit>
+      <trans-unit id="d1a104b898a98507266090df8f5b22e5">
+        <source>Part of your order is paid</source>
+        <target>Une partie de votre commande est payée</target>
+      </trans-unit>
+      <trans-unit id="1bad89376ab9be064138e50e8962df99">
+        <source>Order cancelled</source>
+        <target>Commande annulée</target>
+      </trans-unit>
+      <trans-unit id="3adab4cea15647a3b4f7d3e1a8ab9040">
+        <source>Pay the rest</source>
+        <target>Payer le reste</target>
+      </trans-unit>
+      <trans-unit id="f3c0c554a879fe8cea13ef70e49380dd">
+        <source>Still waiting for the payment</source>
+        <target>Toujours en attente du paiement</target>
+      </trans-unit>
+      <trans-unit id="a5d7052d56f8785e2926ccaec5a99b71">
+        <source>We have not received the confirmation yet. If you approved the payment, it may take a few more minutes: check again, or contact the shop with your order reference.</source>
+        <target>Nous n’avons pas encore reçu la confirmation. Si vous avez validé le paiement, cela peut prendre encore quelques minutes : vérifiez de nouveau, ou contactez la boutique en indiquant la référence de votre commande.</target>
+      </trans-unit>
+      <trans-unit id="7cf37d1bcfb5bc39aed23c66c5e4c892">
+        <source>Check again</source>
+        <target>Vérifier de nouveau</target>
+      </trans-unit>
+      <trans-unit id="a588b1abc58b8b758c4b34b69b9e10bb">
+        <source>Copied</source>
+        <target>Copié</target>
+      </trans-unit>
+      <trans-unit id="d7ef756603c17535841531131fcb0629">
+        <source>Copy it by hand</source>
+        <target>Copiez-le manuellement</target>
+      </trans-unit>
+    </body>
+  </file>
+  <file original="modules/wajub/src/Checkout/PreparedPayments.php" source-language="en-US" target-language="fr-FR" datatype="plaintext">
+    <body>
+      <trans-unit id="5d69a92cd2a5a544229bedfab1294dc5">
+        <source>Order at %shop%</source>
+        <target>Commande chez %shop%</target>
+      </trans-unit>
+    </body>
+  </file>
+  <file original="modules/wajub/src/Checkout/Starter.php" source-language="en-US" target-language="fr-FR" datatype="plaintext">
+    <body>
+      <trans-unit id="94c4a617b7b957e715af19740e3c2b06">
+        <source>This order can no longer be paid online. Contact the shop to complete it.</source>
+        <target>Cette commande ne peut plus être payée en ligne. Contactez la boutique pour la terminer.</target>
+      </trans-unit>
+      <trans-unit id="2d54bddc5288ac6cd913988354686705">
+        <source>Order #%reference%</source>
+        <target>Commande n° %reference%</target>
+      </trans-unit>
+      <trans-unit id="5eefec4d782a6af80d39b1e20ba6889b">
+        <source>Order #%reference%: %held% already received; %due% left to pay</source>
+        <target>Commande n° %reference% : %held% déjà reçus ; il reste %due% à payer</target>
+      </trans-unit>
+    </body>
+  </file>
+  <file original="modules/wajub/src/Checkout/StatusAnswer.php" source-language="en-US" target-language="fr-FR" datatype="plaintext">
+    <body>
+      <trans-unit id="55826f823758853ae9c1b5ba2494f6c0">
+        <source>Part of this order was paid before it was cancelled. Contact the shop to complete it.</source>
+        <target>Une partie de cette commande a été payée avant son annulation. Contactez la boutique pour la finaliser.</target>
+      </trans-unit>
+      <trans-unit id="d58c9d775361e6f56c45fcbdbf9c7cd7">
+        <source>%received% already received; %left% left to pay.</source>
+        <target>%received% déjà reçus ; il reste %left% à payer.</target>
+      </trans-unit>
+      <trans-unit id="a6439879f0471853b2f3b01aa32f14b2">
+        <source>The payment was cancelled. Your order is saved: you can try again.</source>
+        <target>Le paiement a été annulé. Votre commande est enregistrée : vous pouvez réessayer.</target>
+      </trans-unit>
+      <trans-unit id="e4921d1c00c01cbccaf1d92e4e4d5733">
+        <source>Your payment session expired before it was completed. Your order is saved: you can try again.</source>
+        <target>Votre session de paiement a expiré avant d’être finalisée. Votre commande est enregistrée : vous pouvez réessayer.</target>
+      </trans-unit>
+      <trans-unit id="b0b4a9b16ad0f05a511af2cdeb11a8fc">
+        <source>This order was cancelled before it was paid.</source>
+        <target>Cette commande a été annulée avant d’être payée.</target>
+      </trans-unit>
+    </body>
+  </file>
+  <file original="modules/wajub/src/Payment/ChannelLabels.php" source-language="en-US" target-language="fr-FR" datatype="plaintext">
+    <body>
+      <trans-unit id="046dac9a38bbc263a7bd884ffce62cd3">
+        <source>Crypto (%coin%)</source>
+        <target>Crypto (%coin%)</target>
+      </trans-unit>
+      <trans-unit id="1d565b9e5303987bb1b1938d5d458bca">
+        <source>Card</source>
+        <target>Carte bancaire</target>
+      </trans-unit>
+      <trans-unit id="431647a0a8b2cd589c9fda9535f90d6d">
+        <source>Bank transfer</source>
+        <target>Virement bancaire</target>
+      </trans-unit>
+      <trans-unit id="e9cdb28a2a0c8374956d4d9b2c39f047">
+        <source>Mobile Money</source>
+        <target>Mobile Money</target>
+      </trans-unit>
+      <trans-unit id="f35a16a2a5a699b4df74ea1151d25abb">
+        <source>Bacs Direct Debit</source>
+        <target>Prélèvement Bacs</target>
+      </trans-unit>
+      <trans-unit id="dd57bd33ef97ffc0689f11e9309735be">
+        <source>Korean local card</source>
+        <target>Carte locale coréenne</target>
+      </trans-unit>
+      <trans-unit id="79ad4e0522a0a67a6e196be52357e60b">
+        <source>Crypto</source>
+        <target>Crypto</target>
+      </trans-unit>
+      <trans-unit id="c0db4214f9d7e1b846f4496e03e667d0">
+        <source>SEPA Direct Debit</source>
+        <target>Prélèvement SEPA</target>
+      </trans-unit>
+      <trans-unit id="7497d8c3bb4d3e02b5d64bae073c6750">
+        <source>ACH Direct Debit</source>
+        <target>Prélèvement ACH</target>
+      </trans-unit>
+      <trans-unit id="a11683317ae3d1b5bdb1c14cb7b1d8e6">
+        <source>Pre-authorized debit (ACSS)</source>
+        <target>Prélèvement préautorisé (ACSS)</target>
+      </trans-unit>
+      <trans-unit id="2bbd9434a1ac83f280bc66ad27c7bbd6">
+        <source>BECS Direct Debit</source>
+        <target>Prélèvement BECS</target>
+      </trans-unit>
+      <trans-unit id="863e853d1fdf59003c9c5a4a35b8d41d">
+        <source>Net banking</source>
+        <target>Banque en ligne</target>
+      </trans-unit>
+      <trans-unit id="419e36b8c869001aa78449491074237b">
+        <source>USSD</source>
+        <target>USSD</target>
+      </trans-unit>
+      <trans-unit id="9c12f952ca3695bb3043ddcc0ceaaf80">
+        <source>QR code</source>
+        <target>QR code</target>
+      </trans-unit>
+      <trans-unit id="6311ae17c1ee52b36e68aaf4ad066387">
+        <source>Other</source>
+        <target>Autre</target>
+      </trans-unit>
+    </body>
+  </file>
+  <file original="modules/wajub/src/Payment/MethodTexts.php" source-language="en-US" target-language="fr-FR" datatype="plaintext">
+    <body>
+      <trans-unit id="569fd05bdafa1712c4f6be5b153b8418">
+        <source>Other payment methods</source>
+        <target>Autres moyens de paiement</target>
+      </trans-unit>
+      <trans-unit id="379b14414aa6e57ce2da8c23c6b4fd64">
+        <source>Mobile Money or card</source>
+        <target>Mobile Money ou carte bancaire</target>
+      </trans-unit>
+      <trans-unit id="9fdc066f2a1d7abd0bbb74b2a2a87e41">
+        <source>Pay with Mobile Money, card, or other methods via Wajub.</source>
+        <target>Payez par Mobile Money, carte bancaire ou un autre moyen de paiement via Wajub.</target>
+      </trans-unit>
+      <trans-unit id="27c87630f6e3a15147b50ac42fe4c247">
+        <source>Pay with your Mobile Money account: you approve the payment on your phone.</source>
+        <target>Payez avec votre compte Mobile Money : vous validez le paiement sur votre téléphone.</target>
+      </trans-unit>
+      <trans-unit id="b7e860a48e0f3e27c723120af9b3cb4d">
+        <source>Pay by Visa or Mastercard.</source>
+        <target>Payez par Visa ou Mastercard.</target>
+      </trans-unit>
+      <trans-unit id="4d525819c11c9a7d9a595e617f662d09">
+        <source>Pay with another payment method offered by Wajub.</source>
+        <target>Payez avec un autre moyen de paiement proposé par Wajub.</target>
+      </trans-unit>
+    </body>
+  </file>
+  <file original="modules/wajub/src/Privacy/CustomerData.php" source-language="en-US" target-language="fr-FR" datatype="plaintext">
+    <body>
+      <trans-unit id="44749712dbec183e983dcd78a7736c41">
+        <source>Date</source>
+        <target>Date</target>
+      </trans-unit>
+      <trans-unit id="a240fa27925a635b08dc28c9e4f9216d">
+        <source>Order</source>
+        <target>Commande</target>
+      </trans-unit>
+      <trans-unit id="6cb768a124fd209da8904064b3be8c58">
+        <source>Wajub payment ID</source>
+        <target>ID du paiement Wajub</target>
+      </trans-unit>
+      <trans-unit id="f0aaaae189e9c7711931a65ffcd22543">
+        <source>Payment method</source>
+        <target>Moyen de paiement</target>
+      </trans-unit>
+      <trans-unit id="ec53a8c4f07baed5d8825072c89799be">
+        <source>Status</source>
+        <target>Statut</target>
+      </trans-unit>
+      <trans-unit id="386c339d37e737a436499d423a77df0c">
+        <source>Currency</source>
+        <target>Devise</target>
+      </trans-unit>
+      <trans-unit id="b2f40690858b404ed10e62bdf422c704">
+        <source>Amount</source>
+        <target>Montant</target>
+      </trans-unit>
+      <trans-unit id="8ec41b16dc7d53ad2c4bfd4d6cc9b6d7">
+        <source>Amount paid</source>
+        <target>Montant payé</target>
+      </trans-unit>
+      <trans-unit id="cbb3ab577b705e328991986e35218f50">
+        <source>Amount refunded</source>
+        <target>Montant remboursé</target>
+      </trans-unit>
+      <trans-unit id="0ba29c6a1afacf586b03a26162c72274">
+        <source>Environment</source>
+        <target>Environnement</target>
+      </trans-unit>
+      <trans-unit id="955ad3298db330b5ee880c2c9e6f23a0">
+        <source>Live</source>
+        <target>Production</target>
+      </trans-unit>
+      <trans-unit id="2652eec977dcb2a5aea85f5bec235b05">
+        <source>Sandbox</source>
+        <target>Test</target>
+      </trans-unit>
+      <trans-unit id="e0010a0a1a3259ab5c06a19bad532851">
+        <source>Paid</source>
+        <target>Payé</target>
+      </trans-unit>
+      <trans-unit id="643562a9ae7099c8aabfdc93478db117">
+        <source>Processing</source>
+        <target>En cours</target>
+      </trans-unit>
+      <trans-unit id="45c7406cfff35f0b1764d168dfc8824a">
+        <source>Paying in instalments</source>
+        <target>Paiement en plusieurs échéances</target>
+      </trans-unit>
+      <trans-unit id="d7c8c85bf79bbe1b7188497c32c3b0ca">
+        <source>Failed</source>
+        <target>Échoué</target>
+      </trans-unit>
+      <trans-unit id="a149e85a44aeec9140e92733d9ed694e">
+        <source>Cancelled</source>
+        <target>Annulé</target>
+      </trans-unit>
+      <trans-unit id="cc61945cbbf46721a053467c395c666f">
+        <source>Refunded</source>
+        <target>Remboursé</target>
+      </trans-unit>
+      <trans-unit id="9f004157e4c148dac71da3ae5906351f">
+        <source>Partially refunded</source>
+        <target>Partiellement remboursé</target>
+      </trans-unit>
+      <trans-unit id="2d13df6f8b5e4c5af9f87e0dc39df69d">
+        <source>Pending</source>
+        <target>En attente</target>
+      </trans-unit>
+    </body>
+  </file>
+  <file original="modules/wajub/src/Support/CustomerMessage.php" source-language="en-US" target-language="fr-FR" datatype="plaintext">
+    <body>
+      <trans-unit id="331f8b3facc4ac91f362b92bb2d38d37">
+        <source>This amount cannot be paid online. Please contact the shop or change your order.</source>
+        <target>Ce montant ne peut pas être payé en ligne. Veuillez contacter la boutique ou modifier votre commande.</target>
+      </trans-unit>
+      <trans-unit id="76650596cdfdcd970a844f85794f7fe9">
+        <source>This currency is not accepted for online payment. Please contact the shop.</source>
+        <target>Cette devise n’est pas acceptée pour le paiement en ligne. Veuillez contacter la boutique.</target>
+      </trans-unit>
+      <trans-unit id="866bbcf74fb6c108e1a921304c84ddb4">
+        <source>Your phone number looks invalid. Check it in your address, including the country code (e.g. +237…), and try again.</source>
+        <target>Votre numéro de téléphone semble invalide. Vérifiez-le dans votre adresse, indicatif du pays compris (par ex. +237…), puis réessayez.</target>
+      </trans-unit>
+      <trans-unit id="1c8d02e956bf7bef8b9078c3a958de1d">
+        <source>Your email address looks invalid. Check it and try again.</source>
+        <target>Votre adresse e-mail semble invalide. Vérifiez-la, puis réessayez.</target>
+      </trans-unit>
+      <trans-unit id="06db1f50995e698fca753dac74d75aa4">
+        <source>The payment service is temporarily unavailable. Please try again in a few moments.</source>
+        <target>Le service de paiement est momentanément indisponible. Veuillez réessayer dans quelques instants.</target>
+      </trans-unit>
+      <trans-unit id="d34b7c6b2d590a03cd6faaa10f98d047">
+        <source>Online payment is temporarily unavailable in this shop. Please contact the shop.</source>
+        <target>Le paiement en ligne est momentanément indisponible dans cette boutique. Veuillez contacter la boutique.</target>
+      </trans-unit>
+    </body>
+  </file>
+  <file original="modules/wajub/views/templates/hook/order-detail.tpl" source-language="en-US" target-language="fr-FR" datatype="plaintext">
+    <body>
+      <trans-unit id="c453a4b8e8d98e82f35b67f433e3b4da">
+        <source>Payment</source>
+        <target>Paiement</target>
+      </trans-unit>
+      <trans-unit id="378e068360de1d1977cf20423b5445a2">
+        <source>Part of your order is paid.</source>
+        <target>Une partie de votre commande est payée.</target>
+      </trans-unit>
+      <trans-unit id="d39138bd92ba32a2171af61a6276302b">
+        <source>This order is not paid yet.</source>
+        <target>Cette commande n’est pas encore payée.</target>
+      </trans-unit>
+      <trans-unit id="15d5deb1c8d1f58f30b8fa83124ddfe2">
+        <source>Pay for this order</source>
+        <target>Payer cette commande</target>
+      </trans-unit>
+    </body>
+  </file>
+  <file original="modules/wajub/views/templates/hook/payment-return.tpl" source-language="en-US" target-language="fr-FR" datatype="plaintext">
+    <body>
+      <trans-unit id="d8f04427eaa31c3f7934243f9bc89806">
+        <source>Confirm the payment on your phone</source>
+        <target>Validez le paiement sur votre téléphone</target>
+      </trans-unit>
+      <trans-unit id="746d3bf46e3f098c1cfeca0de52737b5">
+        <source>Your order is saved. To finish paying:</source>
+        <target>Votre commande est enregistrée. Pour finaliser le paiement :</target>
+      </trans-unit>
+      <trans-unit id="b49210ac8f3eb9f83edf97e785302183">
+        <source>Confirming your payment…</source>
+        <target>Confirmation de votre paiement…</target>
+      </trans-unit>
+      <trans-unit id="0033c68c9e323f47bc72d6f993d76be7">
+        <source>Your order is saved. Keep this page open: it updates by itself once Wajub confirms the payment.</source>
+        <target>Votre commande est enregistrée. Gardez cette page ouverte : elle se mettra à jour automatiquement dès que Wajub aura confirmé le paiement.</target>
+      </trans-unit>
+      <trans-unit id="b863bdb1bde232d34ca6d832d6b540c9">
+        <source>Approve the payment request on your phone.</source>
+        <target>Validez la demande de paiement sur votre téléphone.</target>
+      </trans-unit>
+      <trans-unit id="04587d4c3b35389666100e3af79ad2cf">
+        <source>Enter your PIN to confirm it.</source>
+        <target>Saisissez votre code PIN pour la confirmer.</target>
+      </trans-unit>
+      <trans-unit id="63411c048f23b6bdc727e41d9b5c61b1">
+        <source>Keep this page open: it updates by itself once the payment is confirmed.</source>
+        <target>Gardez cette page ouverte : elle se mettra à jour automatiquement dès que le paiement sera confirmé.</target>
+      </trans-unit>
+      <trans-unit id="5fb63579fc981698f97d55bfecb213ea">
+        <source>Copy</source>
+        <target>Copier</target>
+      </trans-unit>
+      <trans-unit id="8d57a3cecaf5ed7fdb259606e609ef33">
+        <source>the payment ID</source>
+        <target>l’ID de paiement</target>
+      </trans-unit>
+    </body>
+  </file>
+  <file original="modules/wajub/wajub.php" source-language="en-US" target-language="fr-FR" datatype="plaintext">
+    <body>
+      <trans-unit id="37830a0e180d62c1fa8473f75aad1963">
+        <source>Payment IDs:</source>
+        <target>ID de paiement :</target>
+      </trans-unit>
+      <trans-unit id="3d2ebc813f61bf5f17a5a70ea97da641">
+        <source>Payment ID:</source>
+        <target>ID de paiement :</target>
+      </trans-unit>
+    </body>
+  </file>
+</xliff>

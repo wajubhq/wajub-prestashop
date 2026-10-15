@@ -1,0 +1,9 @@
+Connect with Wajub again
+
+{message}
+
+{where}
+
+{advice}
+
+{shop_name} - {shop_url}

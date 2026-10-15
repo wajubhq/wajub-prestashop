@@ -1,0 +1,286 @@
+/**
+ * Wajub for PrestaShop
+ *
+ * @author    Wajub
+ * @copyright Since 2026 Wajub
+ * @license   https://opensource.org/licenses/MIT MIT License
+ *
+ * The module's settings page, on top of the back office's own styles:
+ * PrestaShop's panels, forms and buttons stay as the merchant knows them.
+ */
+.wajub-admin [hidden] {
+  display: none !important;
+}
+
+.wajub-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+
+.wajub-header-logo {
+  flex: none;
+  border-radius: 10px;
+}
+
+.wajub-header-text {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+.wajub-header-title {
+  margin: 0;
+  font-size: 20px;
+}
+
+.wajub-admin .wajub-header-title small {
+  font-size: 12px;
+  color: #5b6f76;
+}
+
+.wajub-header-lead,
+.wajub-header-scope {
+  margin: 4px 0 0;
+}
+
+.wajub-header-scope {
+  font-weight: 600;
+}
+
+.wajub-header-environment {
+  margin: 0;
+}
+
+.wajub-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.wajub-badge--sandbox {
+  background: #fff4d6;
+  color: #6b4a00;
+}
+
+.wajub-badge--live {
+  background: #d8f3e3;
+  color: #0d5a2c;
+}
+
+.wajub-tabs {
+  margin-bottom: 16px;
+}
+
+.wajub-tabs > li > a:focus-visible {
+  outline: 2px solid #25b9d7;
+  outline-offset: -2px;
+}
+
+/* Tabs, not links: no underline, on PrestaShop 9's back office either. */
+.wajub-tabs > li > a,
+.wajub-tabs > li > a:hover,
+.wajub-tabs > li > a:focus {
+  text-decoration: none;
+}
+
+.wajub-connection {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.wajub-connection-text {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.wajub-connection-label {
+  display: block;
+}
+
+.wajub-dot {
+  display: inline-block;
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #8a99a6;
+}
+
+.wajub-dot--success {
+  background: #1a8a4a;
+}
+
+.wajub-dot--warning {
+  background: #c27c00;
+}
+
+.wajub-dot--error {
+  background: #c9302c;
+}
+
+.wajub-lead {
+  font-size: 14px;
+}
+
+.wajub-environments {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.wajub-environment {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid #e5e9ec;
+}
+
+.wajub-environment:last-child {
+  border-bottom: 0;
+}
+
+.wajub-environment-text {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.wajub-environment-name,
+.wajub-environment-state,
+.wajub-environment-detail {
+  display: block;
+}
+
+/* Darker than the back office's muted grey (#6c868e), which falls short of
+   a 4.5:1 contrast on white. */
+.wajub-environment-detail {
+  color: #5b6f76;
+}
+
+.wajub-text-warning {
+  color: #8a5a00;
+}
+
+.wajub-text-error {
+  color: #b02a26;
+}
+
+.wajub-pairing-code {
+  display: inline-block;
+  padding: 6px 14px;
+  border: 2px dashed #25b9d7;
+  border-radius: 6px;
+  font-family: monospace;
+  font-size: 24px;
+  letter-spacing: 0.12em;
+}
+
+.wajub-pairing-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wajub-pairing-title:focus,
+.wajub-pairing-result:focus,
+.wajub-webhook-results:focus {
+  outline: 2px solid #25b9d7;
+  outline-offset: 2px;
+}
+
+.wajub-fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.wajub-admin legend.wajub-legend {
+  width: auto;
+  margin-bottom: 8px;
+  padding: 0;
+  border: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.wajub-admin legend.wajub-legend-inline {
+  width: auto;
+  margin: 0;
+  border: 0;
+  font-size: inherit;
+}
+
+.wajub-details > .wajub-summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.wajub-details[open] > .wajub-summary {
+  margin-bottom: 12px;
+}
+
+.wajub-language {
+  font-weight: 400;
+}
+
+.wajub-logos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.wajub-logo-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 400;
+}
+
+.wajub-logo {
+  height: 24px;
+  width: auto;
+}
+
+.wajub-logo--plain {
+  padding: 2px;
+  border-radius: 4px;
+  background: #fff;
+}
+
+.wajub-subheading {
+  margin: 16px 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.wajub-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wajub-steps {
+  padding-left: 20px;
+}
+
+@media (max-width: 767px) {
+  .wajub-pairing-code {
+    font-size: 20px;
+  }
+}
+
+/* A link inside a line of help is told from the text by more than its
+   colour. */
+.wajub-admin .help-block a,
+.wajub-admin .wajub-lead a {
+  text-decoration: underline;
+}

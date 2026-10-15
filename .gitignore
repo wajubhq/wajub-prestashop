@@ -1,0 +1,8 @@
+# Installed by Composer for development: the zip ships its own vendor/
+# (bin/build-zip.sh), with the module's autoloader only.
+/vendor/
+/.php-cs-fixer.cache
+/.phpstan/
+/build/
+/wajub.zip
+/tests/.tmp/

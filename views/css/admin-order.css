@@ -1,0 +1,97 @@
+/**
+ * Wajub for PrestaShop
+ *
+ * @author    Wajub
+ * @copyright Since 2026 Wajub
+ * @license   https://opensource.org/licenses/MIT MIT License
+ */
+/* The "Wajub payment" panel of the back office's order page. */
+
+.wajub-order-panel__mark {
+  margin-inline-end: 0.35em;
+  vertical-align: -4px;
+}
+
+.wajub-order-panel__payment {
+  margin: 0 0 1rem;
+  padding: 0 0 1rem;
+  border-bottom: 1px solid #dfe3e8;
+}
+
+.wajub-order-panel__payment:last-of-type {
+  border-bottom: 0;
+}
+
+.wajub-order-panel__row {
+  display: flex;
+  gap: 1rem;
+  margin: 0 0 0.35rem;
+}
+
+.wajub-order-panel__row dt {
+  flex: 0 0 9rem;
+  font-weight: 600;
+}
+
+.wajub-order-panel__row dd {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.wajub-order-panel__notes-title {
+  margin: 1rem 0 0.5rem;
+  font-size: 0.9375rem;
+}
+
+.wajub-order-panel__notes {
+  margin: 0 0 1rem;
+  padding-inline-start: 1.25rem;
+}
+
+.wajub-order-panel__notes li {
+  margin: 0 0 0.35rem;
+}
+
+.wajub-order-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.wajub-order-panel [aria-disabled="true"] {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+/* The back office's muted grey and its badges fall short of a 4.5:1
+   contrast; the panel's own keep to it. */
+.wajub-order-panel .text-muted {
+  color: #5b6f76 !important;
+}
+
+.wajub-order-panel .badge {
+  font-weight: 600;
+}
+
+.wajub-order-panel .badge-success {
+  background-color: #d8f3e3;
+  color: #0d5a2c;
+}
+
+.wajub-order-panel .badge-warning {
+  background-color: #fff4d6;
+  color: #6b4a00;
+}
+
+.wajub-order-panel .badge-danger {
+  background-color: #fde2e1;
+  color: #8e1f1b;
+}
+
+.wajub-order-panel dd a {
+  text-decoration: underline;
+}

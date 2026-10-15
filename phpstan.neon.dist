@@ -1,0 +1,30 @@
+# Wajub for PrestaShop
+#
+# PHPStan against a PrestaShop source tree, which bin/check.sh names:
+#     _PS_ROOT_DIR_=/path/to/prestashop bin/check.sh
+#
+# Level 6: every function and property typed, generics included, as the
+# module's own code is written. Above that, PHPStan asks for the exact
+# shape of PrestaShop's own untyped arrays (Language::getLanguages(),
+# Db::getRow()), which its source does not declare.
+#
+# prestashop/php-dev-tools' settings (ps-module-extension.neon), with the
+# module's bootstrap in place of theirs: see tests/phpstan-bootstrap.php.
+parameters:
+    level: 6
+    phpVersion: 80100
+    paths:
+        - wajub.php
+        - controllers
+        - src
+    bootstrapFiles:
+        - tests/phpstan-bootstrap.php
+    stubFiles:
+        - vendor/prestashop/php-dev-tools/phpstan/stubs/Module.stub
+        - vendor/prestashop/php-dev-tools/phpstan/stubs/Tab.stub
+    dynamicConstantNames:
+        - _PS_VERSION_
+        - _PS_MODE_DEV_
+        - _PS_MODE_DEMO_
+    tmpDir: .phpstan
+    reportUnmatchedIgnoredErrors: true
