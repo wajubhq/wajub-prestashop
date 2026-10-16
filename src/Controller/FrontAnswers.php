@@ -12,6 +12,7 @@ declare(strict_types=1);
 namespace Wajub\PrestaShop\Controller;
 
 use Symfony\Component\HttpFoundation\Request;
+use Wajub\PrestaShop\Checkout\KeptNotices;
 
 if (!defined('_PS_VERSION_')) {
     exit;
@@ -21,11 +22,11 @@ if (!defined('_PS_VERSION_')) {
  * What the module's storefront controllers share: a JSON answer that no
  * cache keeps, the request's method, headers and the visitor's address (read
  * through Symfony's Request, which PrestaShop ships, rather than PHP's
- * globals), and a message kept for the next page, as PrestaShop's
- * redirectWithNotifications() keeps it, for a script that takes the payer
- * there itself.
+ * globals), and messages for the page a script takes the payer to next,
+ * which go through PrestaShop's own redirectWithNotifications()
+ * (Checkout\KeptNotices).
  *
- * For ModuleFrontController's subclasses only.
+ * For the module's ModuleFrontController subclasses only.
  */
 trait FrontAnswers
 {
@@ -88,30 +89,56 @@ trait FrontAnswers
     }
 
     /**
-     * Keeps the controller's messages for the next page the payer opens, as
-     * redirectWithNotifications() does before it redirects.
+     * Where the script that reads this answer takes the payer, for the
+     * controller's messages to show there: this controller (`$controller`)
+     * again, with their id (Checkout\KeptNotices), which hands them to
+     * PrestaShop's redirectWithNotifications() on its way to `$to`
+     * (showKeptNotices()). `$to` itself when there is nothing to say.
      */
-    protected function keepNotifications(): void
+    protected function throughNotices(string $controller, string $to): string
     {
-        $notifications = json_encode([
+        $id = (new KeptNotices($this->module->services()->state()))->keep([
             'error' => $this->errors,
             'warning' => $this->warning,
             'success' => $this->success,
             'info' => $this->info,
-        ]);
-        if (session_status() === PHP_SESSION_NONE) {
-            session_start();
-        }
-        if (session_status() === PHP_SESSION_ACTIVE) {
-            $_SESSION['notifications'] = $notifications;
-        }
+        ], $to);
+
+        return $id === '' ? $to : $this->context->link->getModuleLink('wajub', $controller, ['notice' => $id], true);
     }
 
-    /** A posted (or, failing that, given) value as one short line of text. */
-    protected function text(string $name, int $max = 128): string
+    /**
+     * A payer a script sent here (throughNotices()): their messages go to
+     * PrestaShop's notifications, read on the page they are taken to, the
+     * checkout when their messages are gone. Nothing for a request without
+     * `notice`.
+     */
+    protected function showKeptNotices(): void
     {
-        $value = \Tools::getValue($name, '');
+        $id = (string) \Tools::getValue('notice', '');
+        if ($id === '') {
+            return;
+        }
+        $kept = (new KeptNotices($this->module->services()->state()))->take(substr($id, 0, 64));
+        foreach ($kept !== null ? $kept['messages'] : [] as $kind => $messages) {
+            foreach ($messages as $message) {
+                if ($kind === 'error') {
+                    $this->errors[] = $message;
+                } elseif ($kind === 'warning') {
+                    $this->warning[] = $message;
+                } elseif ($kind === 'success') {
+                    $this->success[] = $message;
+                } else {
+                    $this->info[] = $message;
+                }
+            }
+        }
+        $this->redirectWithNotifications($kept !== null ? $kept['to'] : $this->context->link->getPageLink('order'));
+    }
 
-        return is_string($value) ? substr(trim($value), 0, $max) : '';
+    /** A posted (or, failing that, given) value, read as text, as one short line. */
+    protected function line(string $value, int $max = 128): string
+    {
+        return substr(trim($value), 0, $max);
     }
 }

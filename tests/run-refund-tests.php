@@ -38,10 +38,14 @@ declare(strict_types=1);
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/fakes/payments.php';
 require_once __DIR__ . '/fakes/money.php';
+require_once __DIR__ . '/fakes/refund-form.php';
 
+use PrestaShop\PrestaShop\Core\Module\Exception\ModuleErrorException;
 use Wajub\PrestaShop\Payment\RefundRecord;
 use Wajub\PrestaShop\Refund\PendingSlips;
 use Wajub\PrestaShop\Refund\RefundSync;
+use Wajub\PrestaShop\Refund\RefusedRefund;
+use Wajub\PrestaShop\Refund\SlipTotals;
 use Wajub\PrestaShop\Services;
 use Wajub\PrestaShop\Webhook\Event;
 use Wajub\PrestaShop\Webhook\RefundEventHandler;
@@ -118,7 +122,8 @@ check($row !== null && $row->refundId === 'rfd_1' && $row->status === 'pending' 
 check(noted(500, 'Wajub refunded ' . fcfa(2500) . ' from trx_e1.') === 1, 'E1: the merchant reads it: ' . notes_of(500));
 $GLOBALS['api']->next['POST /refunds'] = [[422, ['message' => 'Refund amount exceeds refundable amount', 'errors' => ['amount' => ['too much']]]]];
 $answer = refund($s, 500, 1000);
-check($answer['status'] === RefundSync::REFUSED && $answer['message'] === 'Wajub did not refund it: Refund amount exceeds refundable amount (http_422, HTTP 422)' && count($s->refunds()->forOrder(500)) === 1, 'E1: refused by Wajub: nothing kept, the merchant reads why: ' . $answer['message']);
+check($answer['status'] === RefundSync::REFUSED && $answer['message'] === 'Wajub did not refund it: Refund amount exceeds refundable amount (HTTP 422)' && count($s->refunds()->forOrder(500)) === 1, 'E1: refused by Wajub: nothing kept, the merchant reads why, the status once (no code of Wajub\'s): ' . $answer['message']);
+check(slips_of(500) === [], 'E1: its refunds read again, nothing the shop did not know: no slip');
 // Not answered: Wajub may have made it; kept until its webhook says.
 $GLOBALS['api']->next['POST /refunds'] = [FakeWajubApi::timeout(), FakeWajubApi::timeout()];
 $answer = refund($s, 500, 1000);
@@ -138,6 +143,50 @@ $GLOBALS['api']->calls();
 refund($s, 500, 1000);
 check(count($GLOBALS['api']->made) === 2 && count(array_unique(array_map(static fn (array $h): string => $h['Idempotency-Key'] ?? '', $GLOBALS['api']->headers('POST /refunds')))) === 1, 'E1: recorded, asked again: a refund of its own, the order showing the first');
 
+// E1c A refund made in the Wajub Dashboard whose webhook never arrived (an
+// endpoint down past Wajub's retries, a `wajub listen` stopped): Wajub
+// refuses the next refund as more than it can refund. Its refunds are read,
+// and the one the shop missed is recorded as its webhook would have.
+$s = money_shop();
+paid_order(504, ['trx_e1c' => 10000]);
+$GLOBALS['api']->refunds['trx_e1c'][] = refund_data('rfd_e1c_outside', 'trx_e1c', 6000);
+$GLOBALS['api']->next['POST /refunds'] = [[422, ['message' => 'Refund amount exceeds refundable amount (4,000.00 XAF).']]];
+$GLOBALS['api']->calls();
+$answer = refund($s, 504, 5000);
+check($answer['status'] === RefundSync::REFUSED && sent() === 'POST /refunds, GET /payments/trx_e1c/refunds', 'E1c: refused by Wajub as more than it can refund: the payment\'s refunds read: ' . sent());
+check(spaced($answer['message']) === 'Wajub did not refund it: Refund amount exceeds refundable amount (4,000.00 XAF) (HTTP 422). Wajub had refunded ' . fcfa(6000) . ' of this order that the shop had not recorded (its notification never arrived): it is recorded on the order now, as a credit slip. Check what is left to refund.', 'E1c: the merchant reads why, and what was caught up: ' . $answer['message']);
+check(slips_of(504) === [6000.0] && noted(504, 'Wajub refund rfd_e1c_outside of ' . fcfa(6000) . ' (payment trx_e1c), made in the Wajub Dashboard, is recorded on the order as a credit slip.') === 1, 'E1c: the refund the shop missed, on a credit slip of its own, with its note: ' . json_encode(slips_of(504)) . ' ' . notes_of(504));
+check($s->ledger()->held($s->orders()->find(504), 'live') === 4000.0 && $GLOBALS['api']->made === [], 'E1c: the ledger knows what Wajub still holds; nothing refunded by the shop');
+deliver_refund($s, 'refund.succeeded', refund_data('rfd_e1c_outside', 'trx_e1c', 6000));
+check(slips_of(504) === [6000.0], 'E1c: its webhook, arriving after all: nothing recorded twice');
+$GLOBALS['api']->next['POST /refunds'] = [[422, ['message' => 'Refund amount exceeds refundable amount (4,000.00 XAF).']]];
+$answer = refund($s, 504, 4000);
+check($answer['message'] === 'Wajub did not refund it: Refund amount exceeds refundable amount (4,000.00 XAF) (HTTP 422)' && slips_of(504) === [6000.0], 'E1c: refused again, with nothing left to catch up: said as Wajub said it, no slip: ' . $answer['message']);
+// Refused for the key, not the amount: nothing to read.
+$GLOBALS['api']->next['POST /refunds'] = [[403, ['message' => 'Missing permission refund.write', 'error_code' => 'forbidden']]];
+$GLOBALS['api']->calls();
+$answer = refund($s, 504, 1000);
+check(sent() === 'POST /refunds' && $answer['message'] === 'Wajub did not refund it: Missing permission refund.write (forbidden, HTTP 403)', 'E1c: refused for the key: its refunds are not read, Wajub\'s code kept: ' . sent() . ' ' . $answer['message']);
+
+// E1d The shop heard of a Dashboard refund while it was pending, then its
+// success never arrived: known, but at a status behind Wajub's. Another
+// Dashboard refund it never heard of has Wajub refuse the next one: both
+// are read again and recorded, as their webhooks would have.
+$s = money_shop();
+paid_order(505, ['trx_e1d' => 10000]);
+deliver_refund($s, 'refund.created', refund_data('rfd_e1d_pending', 'trx_e1d', 6000, 'pending'));
+check(slips_of(505) === [] && $s->refunds()->find('rfd_e1d_pending')->takesMoney(), 'E1d: known while pending: no slip yet');
+$GLOBALS['api']->refunds['trx_e1d'][] = refund_data('rfd_e1d_pending', 'trx_e1d', 6000);
+$GLOBALS['api']->refunds['trx_e1d'][] = refund_data('rfd_e1d_unheard', 'trx_e1d', 2000);
+$GLOBALS['api']->next['POST /refunds'] = [[422, ['message' => 'Refund amount exceeds refundable amount (2,000.00 XAF).']]];
+$answer = refund($s, 505, 3000);
+$slips = slips_of(505);
+sort($slips);
+check($answer['status'] === RefundSync::REFUSED && $slips === [2000.0, 6000.0] && $s->refunds()->find('rfd_e1d_pending')->status === 'succeeded', 'E1d: refused: the refund known as pending, succeeded with Wajub, is recorded on a credit slip, beside the one never heard of: ' . json_encode($slips) . ' ' . $answer['message']);
+$GLOBALS['api']->next['POST /refunds'] = [[422, ['message' => 'Refund amount exceeds refundable amount (2,000.00 XAF).']]];
+refund($s, 505, 2000);
+check(count(slips_of(505)) === 2, 'E1d: refused again: nothing recorded twice');
+
 // E2 Paid by two: split, the newest first, each up to what it can refund.
 $s = money_shop();
 paid_order(501, ['trx_e2p' => 4000, 'trx_e2r' => 6000]);
@@ -147,6 +196,26 @@ check($answer['status'] === RefundSync::DONE && sent() === 'POST /refunds, POST 
 check(count($answer['keys']) === 2 && $made[0]['metadata']['request_key'] !== $made[1]['metadata']['request_key'], 'E2: a key for each part');
 check(noted(501, 'Wajub refunded ' . fcfa(6000) . ' from trx_e2r, ' . fcfa(1000) . ' from trx_e2p.') === 1, 'E2: the merchant reads both parts: ' . notes_of(501));
 check($s->ledger()->refunded($s->orders()->find(501), 'trx_e2r') === 6000.0 && $s->ledger()->refunded($s->orders()->find(501), 'trx_e2p') === 1000.0, 'E2: each on the ledger');
+
+// E2b Newest by when the payments were made, not by when the order wrote them.
+$s = money_shop();
+money_order(502);
+counted(502, 'trx_e2b_r', 6000, 'live', 2000);
+counted(502, 'trx_e2b_p', 4000, 'live', 1000);
+mark_paid(502);
+refund($s, 502, 7000);
+check(($GLOBALS['api']->bodies('POST /refunds')[0]['payment'] ?? '') === 'trx_e2b_r', 'E2b: the payment made last is refunded first, whatever the order wrote first');
+// Wajub's own date is kept as a payment counts (its `created_at`); without
+// it, when the shop started it.
+$s = money_shop();
+money_order(503, '', 10000.0);
+money_payment(503, 'trx_e2b_late', ['dateAdd' => '2026-10-15 10:00:00', 'amount' => 6000.0]);
+money_payment(503, 'trx_e2b_early', ['dateAdd' => '2026-10-15 09:00:00', 'amount' => 4000.0]);
+counted(503, 'trx_e2b_late', 6000);
+counted(503, 'trx_e2b_early', 4000);
+mark_paid(503);
+refund($s, 503, 7000);
+check(($GLOBALS['api']->bodies('POST /refunds')[0]['payment'] ?? '') === 'trx_e2b_late', 'E2b: without Wajub\'s date, the one the shop started last first');
 
 // E3, E5 What fits in the newest; then what the newest can no longer refund.
 $s = money_shop();
@@ -373,7 +442,10 @@ foreach ([0.0, -2000.0] as $amount) {
 
 // E18 The order page's refund through its request (Refund\PendingSlips): the
 // order locked as the form is read, until the request ends; the slip
-// PrestaShop makes records the refunds.
+// PrestaShop makes records the refunds as PrestaShop adds it
+// (actionObjectOrderSlipAddAfter), saying PrestaShop may stop there until
+// its actionOrderSlipAdd reaches the module and the request ends well,
+// which takes that back.
 $s = money_shop();
 paid_order(523, ['trx_e18' => 10000]);
 $pending = new PendingSlips();
@@ -382,10 +454,21 @@ $answer = refund($s, 523, 3000);
 $pending->expect(523, $s, $answer['keys']);
 check($pending->expects(523) && !$GLOBALS['locks']->acquire('order:523', 0), 'E18: Wajub refunded: the lock stays; the same form posted again waits for this request');
 $slip = $GLOBALS['orders']->merchantSlip(523, 3000);
+$pending->slipAdded(523, $slip);
+check($s->refunds()->findByKey($answer['keys'][0])->idOrderSlip === $slip && $pending->expects(523) && noted(523, 'PrestaShop made credit slip ' . $slip . ' of this refund without the module being told') === 1, 'E18: PrestaShop adds the slip: it records the refund at once, and the order says PrestaShop may stop after it: ' . notes_of(523));
 $pending->slipMade(523, $slip);
 check($s->refunds()->findByKey($answer['keys'][0])->idOrderSlip === $slip && isset($GLOBALS['locks']->held['order:523']) && !$pending->expects(523), 'E18: PrestaShop made the slip: it records the refund; the lock stays until PrestaShop has written what it refunded');
+check(noted(523, 'without the module being told') === 1 && noted(523, 'Wajub refunded ' . fcfa(3000) . ' from trx_e18') === 1, 'E18: its hook reached the module: the note stays until the request ends well, a module after this one may still fail: ' . notes_of(523));
 $pending->finish();
-check(!isset($GLOBALS['locks']->held['order:523']) && slips_of(523) === [], 'E18: the request over, the lock goes, nothing more recorded');
+check(!isset($GLOBALS['locks']->held['order:523']) && slips_of(523) === [] && noted(523, 'without the module being told') === 0 && noted(523, 'Wajub refunded ' . fcfa(3000) . ' from trx_e18') === 1, 'E18: the request over and answered: the note is taken back, the refund\'s own stays, the lock goes, nothing more recorded: ' . notes_of(523));
+$pending = new PendingSlips();
+$pending->lock(523, $s, 10);
+$again = refund($s, 523, 1000);
+$pending->expect(523, $s, $again['keys']);
+$second = $GLOBALS['orders']->merchantSlip(523, 1000);
+$pending->slipMade(523, $second);
+$pending->finish();
+check($s->refunds()->findByKey($again['keys'][0])->idOrderSlip === $second && slips_of(523) === [] && noted(523, 'without the module being told') === 0, 'E18: a slip whose saving the module did not hear of (the hook unregistered): actionOrderSlipAdd records the refund, as before');
 $pending->lock(523, $s, 10);
 $pending->unlock(523);
 check(!isset($GLOBALS['locks']->held['order:523']), 'E18: a refund refused lets the lock go at once');
@@ -399,10 +482,16 @@ $pending = new PendingSlips();
 $pending->lock(524, $s, 10);
 $answer = refund($s, 524, 4000);
 $pending->expect(524, $s, $answer['keys']);
+// PrestaShop runs actionObjectOrderSlipAddAfter for the module's own slip too.
+$GLOBALS['orders']->onSlipAdded = static function (int $idOrder, int $idSlip) use ($pending): void {
+    $pending->slipAdded($idOrder, $idSlip);
+};
 $pending->finish();
+$GLOBALS['orders']->onSlipAdded = null;
 $row = $s->refunds()->findByKey($answer['keys'][0]);
 check(slips_of(524) === [4000.0] && $row->idOrderSlip > 0 && !isset($GLOBALS['locks']->held['order:524']), 'E19: no slip made of it: recorded on one of its own at the end of the request, the lock let go: ' . json_encode(slips_of(524)));
 check(noted(524, 'Wajub refunded ' . fcfa(4000) . ' from payment trx_e19 (refund rfd_1), but PrestaShop did not make the credit slip of this refund: what Wajub refunded is recorded on a credit slip of its own.') === 1, 'E19: the merchant reads it: ' . notes_of(524));
+check(noted(524, 'without the module being told') === 0, 'E19: the module\'s own slip, saved at the end of the request, is never taken for the form\'s: ' . notes_of(524));
 deliver_refund($s, 'refund.succeeded', refund_data('rfd_1', 'trx_e19', 4000, 'succeeded', ['metadata' => ['request_key' => $answer['keys'][0]]]));
 check(slips_of(524) === [4000.0], 'E19: its webhook records nothing more');
 
@@ -427,6 +516,125 @@ check(noted(530, 'PrestaShop made credit slip ' . $slip . ' of this refund witho
 deliver_refund($s, 'refund.succeeded', refund_data($row->refundId, 'trx_e20', 4000, 'succeeded', ['metadata' => ['request_key' => $answer['keys'][0]]]));
 check(slips_of(530) === [] && noted(530, 'went through without a credit slip') === 0, 'E20: its webhook records nothing more');
 
+// E20b Another module's actionOrderSlipAdd fails with a PHP Error (not an
+// exception) that PHP itself ends the request with: before the module's
+// hook, and before any end of request (Symfony's kernel.terminate is never
+// reached). The slip, as PrestaShop added it, records the refund, and
+// the merchant is told to check the refunded quantities PrestaShop never
+// wrote; the lock goes with the request's connection. Its webhook records
+// nothing more, and never calls it money refunded without Wajub.
+$s = money_shop();
+paid_order(531, ['trx_e20b' => 10000]);
+$pending = new PendingSlips();
+$pending->lock(531, $s, 10);
+$answer = refund($s, 531, 4000);
+$pending->expect(531, $s, $answer['keys']);
+$slip = $GLOBALS['orders']->merchantSlip(531, 4000);
+$pending->slipAdded(531, $slip);
+// The Error: no slipMade(), no finish(). The connection closes.
+unset($pending);
+$GLOBALS['locks']->held = [];
+$row = $s->refunds()->findByKey($answer['keys'][0]);
+check($row->idOrderSlip === $slip && slips_of(531) === [], 'E20b: a PHP Error after the slip: PrestaShop\'s slip records the refund all the same, no slip of the module\'s');
+check(noted(531, 'PrestaShop made credit slip ' . $slip . ' of this refund without the module being told: it records the ' . fcfa(4000) . ' Wajub refunded for it. An error may have stopped the refund after the slip: check the refunded quantities') === 1, 'E20b: the merchant is told to check the quantities: ' . notes_of(531));
+deliver_refund($s, 'refund.succeeded', refund_data($row->refundId, 'trx_e20b', 4000, 'succeeded', ['metadata' => ['request_key' => $answer['keys'][0]]]));
+check(slips_of(531) === [] && noted(531, 'without Wajub') === 0 && noted(531, 'went through without a credit slip') === 0 && noted(531, 'without the module being told') === 1, 'E20b: its webhook records nothing more, and never calls it refunded without Wajub: ' . notes_of(531));
+
+// E20c The same with an exception in debug mode: PrestaShop's hook stops
+// before the module, the controller reports it, and the request ends as
+// usual: the end of the request leaves the slip and its note as they are.
+$s = money_shop();
+paid_order(532, ['trx_e20c' => 10000]);
+$pending = new PendingSlips();
+$pending->lock(532, $s, 10);
+$answer = refund($s, 532, 2500);
+$pending->expect(532, $s, $answer['keys']);
+$slip = $GLOBALS['orders']->merchantSlip(532, 2500);
+$pending->slipAdded(532, $slip);
+$pending->finish();
+check($s->refunds()->findByKey($answer['keys'][0])->idOrderSlip === $slip && slips_of(532) === [] && noted(532, 'without the module being told') === 1 && !isset($GLOBALS['locks']->held['order:532']), 'E20c: an exception after the slip: the slip records the refund, the note stays, no second slip, the lock let go: ' . notes_of(532));
+
+// E20d Another module's actionOrderSlipAdd fails AFTER the module's (its
+// place by default, as any module installed later): the hook reached the
+// module, then PrestaShop stopped before writing the quantities it
+// refunded, and the request answered with an error. The note stays, and
+// says to check the quantities before refunding again.
+$s = money_shop();
+paid_order(533, ['trx_e20d' => 10000]);
+$pending = new PendingSlips();
+$pending->lock(533, $s, 10);
+$answer = refund($s, 533, 3500);
+$pending->expect(533, $s, $answer['keys']);
+$slip = $GLOBALS['orders']->merchantSlip(533, 3500);
+$pending->slipAdded(533, $slip);
+$pending->slipMade(533, $slip);
+$pending->finish(false);
+check($s->refunds()->findByKey($answer['keys'][0])->idOrderSlip === $slip && slips_of(533) === [] && !isset($GLOBALS['locks']->held['order:533']), 'E20d: an error after the module\'s hook: the slip records the refund, no second slip, the lock let go');
+check(noted(533, 'PrestaShop made credit slip ' . $slip . ' of this refund without the module being told') === 1 && $GLOBALS['logger']->has('The request ended with an error after PrestaShop made the credit slip of a refund Wajub made: the order says to check its refunded quantities'), 'E20d: the note stays, the merchant checks the quantities before refunding again: ' . notes_of(533));
+
+// E20e Two slips added before PrestaShop's hook tells the module of the
+// form's (another module saves one as it hears of the first): the form's
+// is the first, which records the refund; the other is not the form's.
+$s = money_shop();
+paid_order(534, ['trx_e20e' => 10000]);
+$pending = new PendingSlips();
+$pending->lock(534, $s, 10);
+$answer = refund($s, 534, 2000);
+$pending->expect(534, $s, $answer['keys']);
+$first = $GLOBALS['orders']->merchantSlip(534, 2000);
+$pending->slipAdded(534, $first);
+$other = $GLOBALS['orders']->merchantSlip(534, 500);
+$pending->slipAdded(534, $other);
+$pending->slipMade(534, $first);
+$pending->finish();
+check($s->refunds()->findByKey($answer['keys'][0])->idOrderSlip === $first && noted(534, 'without the module being told') === 0 && noted(534, 'credit slip ' . $other) === 0, 'E20e: the form\'s slip is the first added: it records the refund, its note taken back, nothing said of the other: ' . notes_of(534));
+
+// E20f PrestaShop stopped after the form's slip, its hook never reaching the
+// module (E20c): the end of the request leaves the slip as it is, and says
+// so in the log; it never records the refund on a slip again.
+$s = money_shop();
+paid_order(535, ['trx_e20f' => 10000]);
+$pending = new PendingSlips();
+$pending->lock(535, $s, 10);
+$answer = refund($s, 535, 1500);
+$pending->expect(535, $s, $answer['keys']);
+$slip = $GLOBALS['orders']->merchantSlip(535, 1500);
+$pending->slipAdded(535, $slip);
+$pending->finish();
+check($GLOBALS['logger']->has('PrestaShop stopped after the credit slip of a refund Wajub made: recorded on it') && !$GLOBALS['logger']->has('PrestaShop made the credit slip of a refund Wajub made without the module seeing it: recorded on it') && slips_of(535) === [], 'E20f: logged as stopped after the slip, never recorded again');
+
+// E21 PrestaShop makes the slip of a refund Wajub refused (it should not:
+// RefusedRefund): never refunded through Wajub, and the note tells the
+// merchant something they can do. The refusal's own words were written for
+// a refund that makes no slip ("no credit slip was made", "try again"): the
+// log keeps them, the note does not repeat them; and PrestaShop cannot
+// delete a credit slip.
+$s = money_shop();
+paid_order(531, ['trx_e21' => 10000]);
+$why = 'The refund could not be made through Wajub, and no credit slip was made. Try again in a moment.';
+$GLOBALS['api']->calls();
+$s->refundSync()->noteRefusedSlip($s->orders()->find(531), 12, $why);
+$note = notes_of(531);
+check(noted(531, 'PrestaShop made credit slip 12 though Wajub had refused this refund: Wajub refunded nothing for it') === 1 && sent() === '', 'E21: the slip of a refused refund: noted, nothing asked of Wajub: ' . $note);
+check(!str_contains($note, 'no credit slip was made') && !str_contains($note, 'Try again') && !str_contains($note, 'Delete'), 'E21: the note neither repeats the refusal (a slip "not made", "try again") nor asks for what PrestaShop cannot do (delete the slip): ' . $note);
+check(str_contains($note, 'refund them another way') && str_contains($note, 'correct the stock and your accounts'), 'E21: it says what the merchant can do');
+check(str_contains($GLOBALS['logger']->dump(), 'no credit slip was made'), 'E21: why it was refused is in the log');
+
+// E22 What a slip gives back, read from its row (what the module counts as
+// refunded, and what Wajub refunds of a slip made outside the order page's
+// forms): the refund PrestaShop computed. "Product prices, excluding the
+// voucher", the forms' choice by default, takes the order's 2 000 voucher
+// off: PrestaShop takes it off the products without tax when the amounts
+// were typed with tax (a group shown prices with tax), off those with tax
+// when typed without; the slip gives back 9 925 either way, as its PDF says.
+$withTax = ['amount' => 11925.0, 'products_incl' => 11925.0, 'products_excl' => 8000.0, 'shipping_incl' => 0.0, 'type' => 1, 'details_incl' => 11925.0, 'details_excl' => 10000.0, 'discounts' => 2000.0];
+check(SlipTotals::givenBack($withTax) === 9925.0, 'E22: typed with tax, the voucher taken off: 9 925, not the 11 925 of the products: ' . SlipTotals::givenBack($withTax));
+$withoutTax = ['amount' => 8000.0, 'products_incl' => 9925.0, 'products_excl' => 10000.0, 'shipping_incl' => 0.0, 'type' => 1, 'details_incl' => 11925.0, 'details_excl' => 10000.0, 'discounts' => 2000.0];
+check(SlipTotals::givenBack($withoutTax) === 9925.0, 'E22: typed without tax: 9 925 too, taken off once: ' . SlipTotals::givenBack($withoutTax));
+check(SlipTotals::givenBack(['type' => 2, 'shipping_incl' => 3935.0] + $withTax) === 13860.0, 'E22: with its shipping (PrestaShop then types it 2): 9 925 + 3 935');
+check(SlipTotals::givenBack(['type' => 0, 'products_excl' => 10000.0] + $withTax) === 11925.0 && SlipTotals::givenBack(['discounts' => 0.0, 'products_excl' => 10000.0] + $withTax) === 11925.0, 'E22: "Product prices" (no voucher taken off), or an order with no voucher: the products');
+check(SlipTotals::givenBack(['amount' => 3000.0, 'products_incl' => 0.0, 'products_excl' => 0.0, 'type' => 2, 'details_incl' => 0.0, 'details_excl' => 0.0] + $withTax) === 3000.0, 'E22: a slip of an amount alone (a Dashboard refund recorded): that amount');
+
 // === Refunds made in the Wajub Dashboard ==================================================
 
 // D5 A Dashboard refund of the first payment, once the order is paid: the
@@ -444,6 +652,28 @@ deliver_refund($s, 'refund.created', refund_data('rfd_d5b', 'trx_d5r', 500, 'pen
 check(slips_of(403) === [1000.0] && $s->refunds()->find('rfd_d5b')->takesMoney(), 'D5: a refund pending is known, takes its money back, and is no slip yet');
 deliver_refund($s, 'refund.succeeded', refund_data('rfd_d5b', 'trx_d5r', 500));
 check(slips_of(403) === [1000.0, 500.0], 'D5: once it succeeded, it is one');
+
+// D5b A cart shipped in several packages became two orders (6 000 and
+// 4 000), paid by one payment: a Dashboard refund of what they hold is
+// recorded on both, each order's slips up to its own total, as each
+// order's own refunds are; never all of it on the first, whose slips would
+// then refund more than it cost while the other's showed nothing.
+$s = money_shop();
+money_order(406, '', 6000.0);
+money_order(407, '', 4000.0);
+$GLOBALS['orders']->split(406, 407);
+counted(406, 'trx_d5_split', 10000);
+mark_paid(406);
+mark_paid(407);
+deliver_refund($s, 'refund.succeeded', refund_data('rfd_d5_split', 'trx_d5_split', 7000));
+deliver_refund($s, 'refund.succeeded', refund_data('rfd_d5_split2', 'trx_d5_split', 3000));
+$by = [];
+foreach ($GLOBALS['orders']->slips as $slip) {
+    $by[$slip['order']][] = $slip['amount'];
+}
+check(($by[406] ?? []) === [6000.0] && ($by[407] ?? []) === [1000.0, 3000.0], 'D5b: Dashboard refunds of two orders\' payment: each order\'s slips up to its own total (6 000 on the first, 1 000 then 3 000 on the second): ' . json_encode($by));
+check($s->refunds()->find('rfd_d5_split')->idOrderSlip === $GLOBALS['orders']->slipsOf(406)[0]['id'] && $s->refunds()->find('rfd_d5_split2')->idOrderSlip === $GLOBALS['orders']->slipsOf(407)[1]['id'] && noted(406, 'already records as refunded') === 0 && noted(406, 'beyond') === 0, 'D5b: each refund recorded, on its first slip, nothing said to be refunded twice: ' . notes_of(406));
+check(Wajub\PrestaShop\Order\Ledger::slipShares(5000.0, [10 => 6000.0], 'XAF') === [10 => 5000.0] && Wajub\PrestaShop\Order\Ledger::slipShares(8000.0, [10 => 6000.0, 11 => 0.0], 'XAF') === [10 => 8000.0], 'D5b: an order of its own, or one with no room left beside it: the first takes it all');
 
 // D6 A Dashboard refund of a counted payment while the order is unpaid: the
 // payer pays it again, never a slip as well.
@@ -602,5 +832,57 @@ deliver_refund($s, 'refund.succeeded', refund_data('rfd_o3', 'trx_o3', 10000));
 check(slips_of(973) === [10000.0] && noted(973, 'is now "Refunded"') === 1, 'delivered again: nothing more');
 // A refund of a refunded order's payment arriving late: the order never goes back to paid in part.
 check($s->settlement()->apply($s->orders()->find(973), $GLOBALS['payments']->find('trx_o3'), ['outcome' => 'succeeded', 'status' => 'refunded', 'transaction' => ['id' => 'trx_o3', 'status' => 'refunded', 'amount' => 10000, 'amount_paid' => 10000, 'currency' => 'XAF', 'metadata' => ['order_id' => '973']]]) !== 'failed' && $GLOBALS['orders']->state(973) === FakeShopOrders::REFUNDED, 'a refunded order read again stays "Refunded"');
+
+// === A refusal PrestaShop reads, on 8 as on 9, debug mode or not ============================
+// (Refund\RefusedRefund) PrestaShop 8 swallows an exception thrown by a
+// module's hook once debug mode is off, and makes the slip: the refusal goes
+// in the form's data, which PrestaShop's handler reads next.
+$why = 'Wajub can refund at most 4 000 FCFA on this order.';
+$form = ['products' => [new FakeRefundedProduct()], 'credit_slip' => true];
+$refusedInData = static function (array $params) use ($why): void {
+    RefusedRefund::refuse($params, $why);
+};
+foreach ([[8, false], [8, true], [9, false], [9, true]] as [$version, $debug]) {
+    $answer = FakeRefundForm::post($refusedInData, $form, $version, $debug);
+    check(!$answer['slip'] && $answer['message'] === $why, "refusal: PrestaShop {$version}, debug mode " . ($debug ? 'on' : 'off') . ': no slip, the module\'s message as it is: ' . json_encode($answer));
+}
+$thrown = static function (array $params) use ($why): void {
+    throw new ModuleErrorException($why);
+};
+$answer = FakeRefundForm::post($thrown, $form, 8, false);
+check($answer['slip'] && $answer['message'] === 'A partial refund was successfully created.', 'refusal: thrown from the hook, PrestaShop 8 with debug mode off swallows it and makes the slip (why the module never throws): ' . json_encode($answer));
+check(FakeRefundForm::post($thrown, $form, 8, true)['message'] === 'An unexpected error occurred. [CoreException code 0]: ' . $why && !FakeRefundForm::post($thrown, $form, 9, false)['slip'], 'refusal: thrown, PrestaShop 8 in debug mode wraps it, 9 lets it through: the old way held there only');
+check(FakeRefundForm::post(static function (array $params): void {
+}, $form, 8, false)['slip'], 'refusal: a refund the module lets through makes its slip');
+$params = ['form_data' => ['products' => []]];
+$noForm = ['id' => 42];
+check(RefusedRefund::refuse($params, $why) && RefusedRefund::in($params['form_data']) && !RefusedRefund::in(['products' => []]) && !RefusedRefund::refuse($noForm, $why), 'refusal: in the form\'s data, which another pass of the hook sees; nothing without form data');
+$caught = thrown(static function () use ($params): void {
+    foreach ($params['form_data']['products'] as $product) {
+    }
+});
+check($caught instanceof ModuleErrorException && $caught->getMessage() === $why, 'refusal: what PrestaShop\'s handler meets first');
+$pending = new PendingSlips();
+$pending->refuse(42, $why);
+check($pending->refused(42) === $why && $pending->refused(43) === '' && !$pending->expects(42), 'refusal: the request knows the refund refused: a slip PrestaShop would make of it all the same is never refunded through Wajub');
+
+// === What a slip typed without tax gives back, tax included (Refund\SlipTotals) ===========
+// A customer group shown prices without tax: the merchant types amounts
+// without tax; PrestaShop's slip adds each product's tax back, rounded as the
+// shop rounds (PS_ROUND_TYPE), and Wajub refunds that.
+$vat = static fn (float $amount): float => $amount * 1.1925;
+$round = static fn (float $amount, int $precision): float => round($amount, $precision);
+$group = static fn (int $group, float $sum): float => $sum * ($group === 1 ? 1.1925 : 1.1);
+$lines = [['price' => 8385.5, 'quantity' => 3, 'group' => 1, 'tax' => $vat]];
+check(SlipTotals::productsTaxIncluded($lines, SlipTotals::ROUND_ITEM, 0, $group, $round) === 30000.0, 'tax: each unit rounded, then times the quantity (ROUND_ITEM): 3 × 10 000');
+check(SlipTotals::productsTaxIncluded($lines, SlipTotals::ROUND_LINE, 0, $group, $round) === 29999.0, 'tax: each line rounded (ROUND_LINE): 29 999');
+check(SlipTotals::productsTaxIncluded($lines, SlipTotals::ROUND_TOTAL, 0, $group, $round) === 29999.0, 'tax: each tax rule\'s total rounded once (ROUND_TOTAL): 29 999');
+$two = [
+    ['price' => 1000.4, 'quantity' => 1, 'group' => 1, 'tax' => $vat],
+    ['price' => 1000.4, 'quantity' => 1, 'group' => 1, 'tax' => $vat],
+    ['price' => 500.0, 'quantity' => 2, 'group' => 2, 'tax' => static fn (float $amount): float => $amount * 1.1],
+];
+check(SlipTotals::productsTaxIncluded($two, SlipTotals::ROUND_TOTAL, 0, $group, $round) === 2386.0 + 1100.0 && SlipTotals::productsTaxIncluded($two, SlipTotals::ROUND_ITEM, 0, $group, $round) === 1193.0 * 2 + 550.0 * 2, 'tax: per tax rule, as PrestaShop groups them');
+check(SlipTotals::productsTaxIncluded($lines, 9, 0, $group, $round) === 0.0, 'tax: a rounding type PrestaShop does not know adds nothing, as PrestaShop');
 
 done('refunds');

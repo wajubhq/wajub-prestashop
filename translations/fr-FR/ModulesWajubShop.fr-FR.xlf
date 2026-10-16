@@ -274,6 +274,10 @@
         <source>Part of this order was paid before it was cancelled. Contact the shop to complete it.</source>
         <target>Une partie de cette commande a été payée avant son annulation. Contactez la boutique pour la finaliser.</target>
       </trans-unit>
+      <trans-unit id="ce64e7fd0811b1ae7be59cafd92df8aa">
+        <source>%received% already received; %left% left to pay, for all your orders of reference %reference% together.</source>
+        <target>%received% déjà reçus ; il reste %left% à payer, pour l’ensemble de vos commandes de référence %reference%.</target>
+      </trans-unit>
       <trans-unit id="d58c9d775361e6f56c45fcbdbf9c7cd7">
         <source>%received% already received; %left% left to pay.</source>
         <target>%received% déjà reçus ; il reste %left% à payer.</target>

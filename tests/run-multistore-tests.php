@@ -105,6 +105,8 @@ function scoped(Scope $scope, int $idShop = 1, string $baseUrl = 'https://boutiq
         'money' => new PlainMoneyFormatter(),
         'storefront' => new FakeStorefront(),
         'tokens' => new Tokens('test-secret'),
+        'recountHint' => new MemoryRecountHint(),
+        'taskLog' => $GLOBALS['taskLog'] ?? new MemoryTaskLog(),
     ]);
 }
 
@@ -615,5 +617,35 @@ check($held41 && !$confirmations->holds(41) && $confirmations->holds(42), 'erase
 check($erased['confirmations'] === 1 && $erased['payments'] === 2, 'erase: what it did: ' . json_encode($erased));
 check($GLOBALS['payments']->find('trx_test_gdpr1')?->idCustomer === 0 && $GLOBALS['payments']->find('trx_test_gdpr1')?->idOrder === 41 && $GLOBALS['payments']->find('trx_test_gdpr2')?->idCustomer === 8, 'erase: the payments stay, the record of the order\'s money, but no longer name the customer');
 check($data->export([7]) === [], 'erased, the customer has nothing left to export');
+
+// F1.9 Erased data is not written back: a later delivery of an erased
+// customer's payment moves the order on, never naming the customer again,
+// nor holding their confirmation again.
+$s = payment_services();
+$GLOBALS['orders']->add(44, 15000.0, 'XAF', ['customer' => 7]);
+$late = new PaymentRecord();
+$late->paymentId = 'trx_test_gdpr5';
+$late->idOrder = 44;
+$late->idCustomer = 7;
+$late->idShop = 1;
+$late->environment = 'sandbox';
+$late->method = 'mobile_money';
+$late->mode = PaymentRecord::MODE_HOSTED;
+$late->state = PaymentRecord::ACTIVE;
+$late->status = 'processing';
+$late->currency = 'XAF';
+$late->amount = 15000.0;
+$GLOBALS['payments']->save($late);
+$confirmations = new HeldConfirmations($GLOBALS['store'], static function (array $mail): bool {
+    return true;
+});
+$data = new CustomerData($GLOBALS['payments'], $GLOBALS['refunds'], $confirmations, $GLOBALS['translator']);
+$data->erase([7], [44]);
+$handler = new PaymentEventHandler($s->payments(), static fn (int $idShop): Services => $s, $GLOBALS['logger']);
+$handler->handle(new Event('evt_gdpr_late', 'payment.succeeded', payment_data('trx_test_gdpr5', 'succeeded', 15000.0, ['customer' => ['email' => 'amina@example.cm', 'name' => 'Amina Diallo', 'phone' => '+237677123456'], 'metadata' => ['order_id' => '44']]), 'sandbox'));
+$row = $GLOBALS['payments']->find('trx_test_gdpr5');
+check($row !== null && $row->idCustomer === 0 && $data->export([7]) === [], 'F1.9: after the customer\'s data was erased, a later delivery does not name them again: ' . json_encode($row?->idCustomer));
+check($row !== null && $row->status === 'succeeded' && $GLOBALS['orders']->find(44)?->paid === true, 'F1.9: while the payment\'s status still follows, and pays its order');
+check(!leaked('amina@example.cm', [json_encode($row?->metadata), json_encode($GLOBALS['orders']->notes[44] ?? [])]) && !$confirmations->holds(44), 'F1.9: nothing the delivery said of the payer is kept: no e-mail address, no confirmation held again');
 
 done('multistore');

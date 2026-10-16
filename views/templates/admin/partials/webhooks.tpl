@@ -97,14 +97,34 @@
   <div class="panel">
     <details class="wajub-details">
       <summary class="wajub-summary">{l s='Set the webhook up by hand' d='Modules.Wajub.Admin'}</summary>
-      <ol class="wajub-steps">
-        <li>
-          {l s='In the Wajub Dashboard, under Developers, Webhooks, add an endpoint with the address above, in the environment you use.' d='Modules.Wajub.Admin'}
-          <a href="{$wajub.webhooks_url|escape:'htmlall':'UTF-8'}" target="_blank" rel="noopener noreferrer">{l s='Open the webhooks page' d='Modules.Wajub.Admin'}<span class="sr-only"> {l s='(opens in a new tab)' d='Modules.Wajub.Admin'}</span></a>
-        </li>
-        <li>{l s='Subscribe it to these events: %events%.' sprintf=['%events%' => $wajub.webhook.events] d='Modules.Wajub.Admin'}</li>
-        <li>{l s='Paste the signing secret Wajub shows for it below.' d='Modules.Wajub.Admin'}</li>
-      </ol>
+      {if $wajub.webhook.local}
+        {* A local address: no endpoint in the Dashboard, the Wajub CLI forwards the Sandbox events. *}
+        <p class="help-block" data-wajub-webhook-local>{l s='This shop’s address is local: Wajub cannot reach it, and the Wajub Dashboard takes no endpoint at it. Until the shop is online, receive its Sandbox events on this computer with the Wajub CLI:' d='Modules.Wajub.Admin'}</p>
+        <ol class="wajub-steps">
+          <li>
+            <span id="wajub-listen-command-label">{l s='Run this command, and keep it running while you test:' d='Modules.Wajub.Admin'}</span>
+            <div class="form-group wajub-listen-command">
+              <div class="input-group">
+                <input type="text" class="form-control" id="wajub-listen-command" value="{$wajub.webhook.listen_command|escape:'htmlall':'UTF-8'}" readonly spellcheck="false" aria-labelledby="wajub-listen-command-label">
+                <span class="input-group-btn">
+                  <button type="button" class="btn btn-default" data-wajub-copy="#wajub-listen-command">{l s='Copy' d='Modules.Wajub.Admin'}</button>
+                </span>
+              </div>
+              <p class="help-block" role="status" aria-live="polite" data-wajub-copy-status></p>
+            </div>
+          </li>
+          <li>{l s='Paste the secret that “wajub listen --print-secret” shows into Sandbox signing secret below.' d='Modules.Wajub.Admin'}</li>
+        </ol>
+      {else}
+        <ol class="wajub-steps">
+          <li>
+            {l s='In the Wajub Dashboard, under Developers, Webhooks, add an endpoint with the address above, in the environment you use.' d='Modules.Wajub.Admin'}
+            <a href="{$wajub.webhooks_url|escape:'htmlall':'UTF-8'}" target="_blank" rel="noopener noreferrer">{l s='Open the webhooks page' d='Modules.Wajub.Admin'}<span class="sr-only"> {l s='(opens in a new tab)' d='Modules.Wajub.Admin'}</span></a>
+          </li>
+          <li>{l s='Subscribe it to these events: %events%.' sprintf=['%events%' => $wajub.webhook.events] d='Modules.Wajub.Admin'}</li>
+          <li>{l s='Paste the signing secret Wajub shows for it below.' d='Modules.Wajub.Admin'}</li>
+        </ol>
+      {/if}
       <fieldset class="wajub-fieldset" {if !$wajub.can_edit}disabled{/if}>
         {foreach from=$wajub.webhook.environments item=env}
           <div class="form-group">

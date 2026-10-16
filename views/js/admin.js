@@ -6,8 +6,9 @@
  * @license   https://opensource.org/licenses/MIT MIT License
  *
  * The module's settings page: its tabs, "Test connection", "Register
- * automatically", the webhook address's Copy button, and the confirmation
- * before Live is turned on. No dependency. Words, the page's token and the
+ * automatically", the Copy buttons of the webhook's and the scheduled
+ * task's addresses, and the confirmation before Live is turned on (which
+ * says, too, when the shop cannot bring payers back over HTTPS). No dependency. Words, the page's token and the
  * AJAX address come from PHP in `wajubAdmin`. Without this script the page
  * still works: each tab is a link, and each form posts.
  */
@@ -265,7 +266,9 @@
   function initCopy(root) {
     Array.prototype.forEach.call(root.querySelectorAll("[data-wajub-copy]"), function (button) {
       var field = root.querySelector(button.getAttribute("data-wajub-copy"));
-      var status = root.querySelector("[data-wajub-copy-status]");
+      // The status line of the button's own field: the webhook's address,
+      // the scheduled task's.
+      var status = (button.closest(".form-group") || root).querySelector("[data-wajub-copy-status]");
       if (!field) {
         return;
       }

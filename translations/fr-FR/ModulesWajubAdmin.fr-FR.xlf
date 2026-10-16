@@ -114,6 +114,22 @@
         <source>When you approve in Wajub, choose “No expiry” for a shop whose checkout must not stop. Otherwise, the key lasts 90 days and you connect again.</source>
         <target>Lorsque vous approuvez dans Wajub, choisissez « Sans expiration » pour une boutique dont le paiement ne doit pas s’arrêter. Sinon, la clé dure 90 jours et vous devrez vous reconnecter.</target>
       </trans-unit>
+      <trans-unit id="1174a9fe77f61103dcb5c0a1e8a60839">
+        <source>This shop is not served over HTTPS, so in Live, Wajub cannot bring payers back to it: with Mobile Money or Card, a payer sent to their bank’s or operator’s page stays there. In Shop Parameters &gt; General, enable SSL, and SSL on all pages, before you take real payments with them.</source>
+        <target>Cette boutique n’est pas servie en HTTPS : en production, Wajub ne peut donc pas y ramener les payeurs. Avec Mobile Money ou la carte, un payeur envoyé sur la page de sa banque ou de son opérateur y reste. Dans Paramètres de la boutique &gt; Paramètres généraux, activez le SSL, et le SSL sur tout le site, avant d’accepter des paiements réels par Mobile Money ou carte.</target>
+      </trans-unit>
+      <trans-unit id="63da60dbe70a209dd18275d9ffa09aeb">
+        <source>This shop is not served over HTTPS, so in Live, Wajub cannot bring payers back to it: with Mobile Money or Card, a payer sent to their bank’s or operator’s page stays there. In Shop Parameters &gt; General, enable SSL before you take real payments with them.</source>
+        <target>Cette boutique n’est pas servie en HTTPS : en production, Wajub ne peut donc pas y ramener les payeurs. Avec Mobile Money ou la carte, un payeur envoyé sur la page de sa banque ou de son opérateur y reste. Dans Paramètres de la boutique &gt; Paramètres généraux, activez le SSL avant d’accepter des paiements réels par Mobile Money ou carte.</target>
+      </trans-unit>
+      <trans-unit id="ef663e8bb4748702216201f63fbeb074">
+        <source>Last run: %time% ago.</source>
+        <target>Dernière exécution : il y a %time%.</target>
+      </trans-unit>
+      <trans-unit id="0ea55efa549416f4332d9bd44c164e25">
+        <source>It has not run yet.</source>
+        <target>Elle ne s’est pas encore exécutée.</target>
+      </trans-unit>
       <trans-unit id="e9cdb28a2a0c8374956d4d9b2c39f047">
         <source>Mobile Money</source>
         <target>Mobile Money</target>
@@ -212,6 +228,110 @@
       </trans-unit>
     </body>
   </file>
+  <file original="modules/wajub/src/Admin/Notices.php" source-language="en-US" target-language="fr-FR" datatype="plaintext">
+    <body>
+      <trans-unit id="8d09ac2897bd7cadf3fe53dc80f78366">
+        <source>Wajub takes no payments.</source>
+        <target>Wajub n’accepte aucun paiement.</target>
+      </trans-unit>
+      <trans-unit id="632d055cc60cc939d1bc19d106eea239">
+        <source>Sandbox is selected and has no key: add your sandbox key, or switch to Live to use your live key.</source>
+        <target>Le mode Test est sélectionné et n’a pas de clé : ajoutez votre clé de test, ou passez en production pour utiliser votre clé de production.</target>
+      </trans-unit>
+      <trans-unit id="1667daa97794bdf5eff6fb00a031b364">
+        <source>Add a sandbox key</source>
+        <target>Ajouter une clé de test</target>
+      </trans-unit>
+      <trans-unit id="171edc8a476e1f49c75e5a8d25be3895">
+        <source>Live is selected and has no key: connect Live as well, or switch to Sandbox to use your sandbox key.</source>
+        <target>Le mode Production est sélectionné et n’a pas de clé : connectez aussi la production, ou passez en mode Test pour utiliser votre clé de test.</target>
+      </trans-unit>
+      <trans-unit id="d368e86b700546500d3e30e1ba737ebb">
+        <source>Add a live key</source>
+        <target>Ajouter une clé de production</target>
+      </trans-unit>
+      <trans-unit id="440beed31608f472668b3fa3255411df">
+        <source>Wajub is in Sandbox.</source>
+        <target>Wajub est en mode Test.</target>
+      </trans-unit>
+      <trans-unit id="9104387b6ac46189e9a40e3cab778069">
+        <source>This looks like your live shop, but payments are test payments: customers are not charged and orders are not paid for real. Switch to Live when you are ready.</source>
+        <target>Cette boutique semble ouverte au public, mais les paiements sont des paiements de test : les clients ne sont pas débités et les commandes ne sont pas réellement payées. Passez en production quand vous êtes prêt.</target>
+      </trans-unit>
+      <trans-unit id="79b018852fa6074425b0b8313c804314">
+        <source>Go live</source>
+        <target>Passer en production</target>
+      </trans-unit>
+      <trans-unit id="7871a86bc7941fd31e6a7b442af076fe">
+        <source>Finish setting up Wajub.</source>
+        <target>Terminez la configuration de Wajub.</target>
+      </trans-unit>
+      <trans-unit id="7926a082f207d89cc4cc396e9b09d68f">
+        <source>Connect your Wajub account to start taking Mobile Money and card payments. It takes a few minutes.</source>
+        <target>Connectez votre compte Wajub pour accepter les paiements Mobile Money et par carte. Cela ne prend que quelques minutes.</target>
+      </trans-unit>
+      <trans-unit id="717964036b83f0de6171e8bb13b1be79">
+        <source>Set up Wajub</source>
+        <target>Configurer Wajub</target>
+      </trans-unit>
+      <trans-unit id="48b6e12d5a7fd10bd016a732b6588e9b">
+        <source>Wajub is not offered at checkout.</source>
+        <target>Wajub n’est pas proposé dans le tunnel de commande.</target>
+      </trans-unit>
+      <trans-unit id="0396279c8addd69e587629e60a786d3e">
+        <source>Mobile Money, Card and Other payment methods are all turned off.</source>
+        <target>Mobile Money, Carte bancaire et Autres moyens de paiement sont tous désactivés.</target>
+      </trans-unit>
+      <trans-unit id="f49e7b60ecf0edada872b55677154204">
+        <source>Turn them on</source>
+        <target>Les activer</target>
+      </trans-unit>
+      <trans-unit id="d3f9cb6a35595b8e7d9c0cd2f5e14929">
+        <source>Currency restrictions</source>
+        <target>Restrictions des devises</target>
+      </trans-unit>
+      <trans-unit id="52b7e372bca509e26e66340426dc8531">
+        <source>Country restrictions</source>
+        <target>Restrictions des pays</target>
+      </trans-unit>
+      <trans-unit id="442d9a7c585a4eb14334a32decaee21b">
+        <source>Group restrictions</source>
+        <target>Restrictions des groupes</target>
+      </trans-unit>
+      <trans-unit id="1aa915c48859b4638d4048d533bad273">
+        <source>Carrier restrictions</source>
+        <target>Restrictions par transporteurs</target>
+      </trans-unit>
+      <trans-unit id="b9f02fd132756defd03f02f21fdfdde9">
+        <source>Nothing is ticked for Wajub under %sections% in Payment &gt; Preferences, so customers cannot choose it.</source>
+        <target>Rien n’est coché pour Wajub dans %sections%, sous Paiement &gt; Préférences : les clients ne peuvent donc pas le choisir.</target>
+      </trans-unit>
+      <trans-unit id="91d2ebe18a876a98fb770ca445a2b091">
+        <source>Open Payment preferences</source>
+        <target>Ouvrir les préférences de paiement</target>
+      </trans-unit>
+      <trans-unit id="2d565e4dd40435b86c77c0a3154dd7b9">
+        <source>Wajub’s scheduled task last ran %time% ago.</source>
+        <target>La tâche planifiée de Wajub s’est exécutée pour la dernière fois il y a %time%.</target>
+      </trans-unit>
+      <trans-unit id="d030f0edfac08987f9963e6a1c175380">
+        <source>Wajub’s scheduled task has never run.</source>
+        <target>La tâche planifiée de Wajub ne s’est jamais exécutée.</target>
+      </trans-unit>
+      <trans-unit id="fd9fe80a7fb72c7bdcb2347d2802dedf">
+        <source>PrestaShop’s Cron tasks manager module is installed but has not run it: check that its own task runs, or ask your web host to call this address every 15 minutes.</source>
+        <target>Le module Gestionnaire de tâches cron de PrestaShop est installé, mais ne l’a pas lancée : vérifiez que sa propre tâche s’exécute, ou demandez à votre hébergeur d’appeler cette adresse toutes les 15 minutes.</target>
+      </trans-unit>
+      <trans-unit id="440a00b084db660e129e328342a61ec8">
+        <source>Install PrestaShop’s Cron tasks manager module, which runs it every hour, or ask your web host to call this address every 15 minutes.</source>
+        <target>Installez le module Gestionnaire de tâches cron de PrestaShop, qui la lance toutes les heures, ou demandez à votre hébergeur d’appeler cette adresse toutes les 15 minutes.</target>
+      </trans-unit>
+      <trans-unit id="7081140d7362fb836b0d1c8da0290d3a">
+        <source>It cancels the orders customers left unpaid, and reads again the payments Wajub could not tell about.</source>
+        <target>Elle annule les commandes que les clients ont laissées impayées, et relit les paiements dont Wajub n’a pas pu donner l’état.</target>
+      </trans-unit>
+    </body>
+  </file>
   <file original="modules/wajub/src/Admin/OrderPanel.php" source-language="en-US" target-language="fr-FR" datatype="plaintext">
     <body>
       <trans-unit id="c5dc6cb4c41d7126516ac272ff0919b2">
@@ -225,6 +345,10 @@
       <trans-unit id="45c7406cfff35f0b1764d168dfc8824a">
         <source>Paying in instalments</source>
         <target>Paiement en plusieurs échéances</target>
+      </trans-unit>
+      <trans-unit id="ba45094986a7291ec5a069635f3aa647">
+        <source>Orders %orders% (reference %reference%) are one cart shipped in several packages: the payments, amounts and notes here are those of them all.</source>
+        <target>Les commandes %orders% (référence %reference%) sont un même panier livré en plusieurs colis : les paiements, montants et notes affichés ici valent pour l’ensemble de ces commandes.</target>
       </trans-unit>
       <trans-unit id="a899c83337e3285110e250d732141a7a">
         <source>Asked from this order</source>
@@ -369,6 +493,26 @@
       <trans-unit id="51461d91b7605235b6d22f228540d281">
         <source>The customer left the payment without paying (%reason%): the order was cancelled, and its cart given back to the customer to place the order again.</source>
         <target>Le client a quitté le paiement sans payer (%reason%) : la commande a été annulée et son panier lui a été rendu pour qu’il la passe à nouveau.</target>
+      </trans-unit>
+      <trans-unit id="76b90d9df6492e02c3977e960604f2b2">
+        <source>they chose another payment method</source>
+        <target>il a choisi un autre moyen de paiement</target>
+      </trans-unit>
+      <trans-unit id="644b1496aa89e46784d7b798fa4df2df">
+        <source>the payment was cancelled</source>
+        <target>le paiement a été annulé</target>
+      </trans-unit>
+      <trans-unit id="f07faba5c156f25b01ced2fa9d91ba2b">
+        <source>the payment expired</source>
+        <target>le paiement a expiré</target>
+      </trans-unit>
+      <trans-unit id="39ec5e44f4d675d58ca3725cf978a1db">
+        <source>the payment method could not take the order</source>
+        <target>le moyen de paiement ne pouvait pas prendre la commande</target>
+      </trans-unit>
+      <trans-unit id="d7aea667770ec5310360631cc79bc3fa">
+        <source>the payment was declined or failed</source>
+        <target>le paiement a été refusé ou a échoué</target>
       </trans-unit>
     </body>
   </file>
@@ -606,9 +750,17 @@
   </file>
   <file original="modules/wajub/src/Order/Cleanup.php" source-language="en-US" target-language="fr-FR" datatype="plaintext">
     <body>
+      <trans-unit id="fe7d1e1b0f89d0e2f15f58e08470a9f8">
+        <source>This unpaid order was cancelled: its Wajub payment was not completed within 1 minute of the order being placed, and Wajub holds no money for it. Its products are back in stock.</source>
+        <target>Cette commande impayée a été annulée : son paiement Wajub n’a pas été terminé dans la minute suivant la commande, et Wajub ne détient pas d’argent pour elle. Ses produits sont de nouveau en stock.</target>
+      </trans-unit>
       <trans-unit id="2193f8f429da45aa5ca4d37667de2958">
         <source>This unpaid order was cancelled: its Wajub payment was not completed within %minutes% minutes of the order being placed, and Wajub holds no money for it. Its products are back in stock.</source>
         <target>Cette commande impayée a été annulée : son paiement Wajub n’a pas été terminé dans les %minutes% minutes suivant la commande, et Wajub ne détient pas d’argent pour elle. Ses produits sont de nouveau en stock.</target>
+      </trans-unit>
+      <trans-unit id="f2392a6e445f16b0986d45e509f7d29c">
+        <source>This unpaid order was not cancelled: Wajub payment %payment% may still go through (Wajub status: %status%). The order is looked at again once Wajub tells how the payment ended.</source>
+        <target>Cette commande impayée n’a pas été annulée : le paiement Wajub %payment% peut encore aboutir (statut Wajub : %status%). La commande sera réexaminée quand Wajub dira comment le paiement s’est terminé.</target>
       </trans-unit>
       <trans-unit id="01ea9bc47098933204f31c921103399c">
         <source>This unpaid order was not cancelled: Wajub payment %payment%, paid in instalments, has collected %paid% so far.</source>
@@ -654,6 +806,10 @@
   </file>
   <file original="modules/wajub/src/Order/Settlement.php" source-language="en-US" target-language="fr-FR" datatype="plaintext">
     <body>
+      <trans-unit id="caceac58d06cc674d420737212250dd1">
+        <source>Wajub payment %payment% was cancelled by the shop, before anyone paid it (Wajub status: %status%).</source>
+        <target>Le paiement Wajub %payment% a été annulé par la boutique, avant que quiconque ne le paie (statut Wajub : %status%).</target>
+      </trans-unit>
       <trans-unit id="86d3ef3f4f46a4cb801fad447838a820">
         <source>The customer did not complete Wajub payment %payment% (Wajub status: %status%).</source>
         <target>Le client n’a pas finalisé le paiement Wajub %payment% (statut Wajub : %status%).</target>
@@ -906,6 +1062,10 @@
         <source>Wajub did not answer (%reason%): the refund may have been made all the same, and is then recorded on the order as a credit slip once Wajub confirms it. Until then, asking again for the same amount sends the same refund again: the customer is not refunded twice.</source>
         <target>Wajub n’a pas répondu (%reason%) : le remboursement a peut-être été fait malgré tout, et il est alors enregistré sur la commande comme un avoir dès que Wajub le confirme. D’ici là, le redemander pour le même montant renvoie le même remboursement : le client n’est pas remboursé deux fois.</target>
       </trans-unit>
+      <trans-unit id="265f94d125f26b85388fca4561f46385">
+        <source>Wajub did not refund it: %reason%. Wajub had refunded %amount% of this order that the shop had not recorded (its notification never arrived): it is recorded on the order now, as a credit slip. Check what is left to refund.</source>
+        <target>Wajub ne l’a pas remboursé : %reason%. Wajub avait remboursé %amount% de cette commande sans que la boutique l’ait enregistré (sa notification n’est jamais arrivée) : c’est maintenant enregistré sur la commande, par un avoir. Vérifiez ce qu’il reste à rembourser.</target>
+      </trans-unit>
       <trans-unit id="a564497377cd1e6beaa6e75a349a8892">
         <source>Wajub did not refund it: %reason%</source>
         <target>Wajub ne l’a pas remboursé : %reason%</target>
@@ -921,6 +1081,10 @@
       <trans-unit id="d199d96bd0734072952d2766e74076e4">
         <source>Wajub refunded %amount% from payment %payment% (refund %refund%), but PrestaShop did not make the credit slip of this refund: what Wajub refunded is recorded on a credit slip of its own.</source>
         <target>Wajub a remboursé %amount% sur le paiement %payment% (remboursement %refund%), mais PrestaShop n’a pas créé l’avoir de ce remboursement : ce que Wajub a remboursé est enregistré sur un avoir à part.</target>
+      </trans-unit>
+      <trans-unit id="42122664040c349f96b4e3f581a2e135">
+        <source>PrestaShop made credit slip %slip% though Wajub had refused this refund: Wajub refunded nothing for it (Advanced Parameters &gt; Logs says why). If the customer should get this money back, refund them another way; otherwise, correct the stock and your accounts, as PrestaShop cannot delete a credit slip.</source>
+        <target>PrestaShop a créé l’avoir %slip% alors que Wajub avait refusé ce remboursement : Wajub n’a rien remboursé pour cet avoir (la raison figure dans Paramètres avancés &gt; Logs). Si le client doit récupérer cet argent, remboursez-le autrement ; sinon, corrigez le stock et votre comptabilité, car PrestaShop ne permet pas de supprimer un avoir.</target>
       </trans-unit>
       <trans-unit id="8c6696a980215a8647a8f9b0489981d0">
         <source>PrestaShop made credit slip %slip% of this refund without the module being told: it records the %amount% Wajub refunded for it. An error may have stopped the refund after the slip: check the refunded quantities of the order&apos;s products before refunding it again.</source>
@@ -1118,9 +1282,13 @@
         <source>Webhook already registered, with its signing secret saved.</source>
         <target>Webhook déjà configuré, avec son secret de signature enregistré.</target>
       </trans-unit>
-      <trans-unit id="f3fc9d9150c7d5291f6454b47d6213b1">
-        <source>Wajub cannot reach %host%: it is a local or private address. Automatic setup works once the shop is online. To test from this computer, expose it with a tunnel (such as the Wajub CLI’s “wajub listen”) and add the webhook by hand.</source>
-        <target>Wajub ne peut pas joindre %host% : c’est une adresse locale ou privée. La configuration automatique fonctionnera une fois la boutique en ligne. Pour tester depuis cet ordinateur, exposez-la avec un tunnel (comme « wajub listen » du CLI Wajub) et ajoutez le webhook manuellement.</target>
+      <trans-unit id="00afeb185a277c74b8747c760f54f9f2">
+        <source>Wajub cannot reach %host%: it is a local or private address. Live webhooks work once the shop is online, at an https:// address.</source>
+        <target>Wajub ne peut pas joindre %host% : c’est une adresse locale ou privée. Les webhooks de production fonctionneront une fois la boutique en ligne, à une adresse https://.</target>
+      </trans-unit>
+      <trans-unit id="d961f1457b349b46911d34b571214cde">
+        <source>Wajub cannot reach %host%: it is a local or private address. Automatic setup works once the shop is online. Meanwhile, to receive Sandbox events on this computer, run “%command%” with the Wajub CLI, and paste the secret that “wajub listen --print-secret” shows into Sandbox signing secret, under Set the webhook up by hand: no endpoint is added in the Wajub Dashboard.</source>
+        <target>Wajub ne peut pas joindre %host% : c’est une adresse locale ou privée. La configuration automatique fonctionnera une fois la boutique en ligne. D’ici là, pour recevoir les événements de test sur cet ordinateur, lancez « %command% » avec le CLI Wajub, puis collez le secret qu’affiche « wajub listen --print-secret » dans « Secret de signature de test », sous « Configurer le webhook manuellement » : aucun point de terminaison n’est à ajouter dans le tableau de bord Wajub.</target>
       </trans-unit>
       <trans-unit id="92480e6f23393af418b7aa520df7338a">
         <source>Live webhooks need an https:// address. Turn on SSL for this shop, then try again.</source>
@@ -1273,18 +1441,6 @@
       <trans-unit id="39838db537c95bc8df810c5601601d5b">
         <source>Test connection</source>
         <target>Tester la connexion</target>
-      </trans-unit>
-      <trans-unit id="8d09ac2897bd7cadf3fe53dc80f78366">
-        <source>Wajub takes no payments.</source>
-        <target>Wajub n’accepte aucun paiement.</target>
-      </trans-unit>
-      <trans-unit id="632d055cc60cc939d1bc19d106eea239">
-        <source>Sandbox is selected and has no key: add your sandbox key, or switch to Live to use your live key.</source>
-        <target>Le mode Test est sélectionné et n’a pas de clé : ajoutez votre clé de test, ou passez en production pour utiliser votre clé de production.</target>
-      </trans-unit>
-      <trans-unit id="171edc8a476e1f49c75e5a8d25be3895">
-        <source>Live is selected and has no key: connect Live as well, or switch to Sandbox to use your sandbox key.</source>
-        <target>Le mode Production est sélectionné et n’a pas de clé : connectez aussi la production, ou passez en mode Test pour utiliser votre clé de test.</target>
       </trans-unit>
       <trans-unit id="133be34cdbd7d6e4c3358ffee46df1b6">
         <source>Connect with Wajub</source>
@@ -1486,9 +1642,17 @@
         <source>Scheduled task</source>
         <target>Tâche planifiée</target>
       </trans-unit>
+      <trans-unit id="5fb63579fc981698f97d55bfecb213ea">
+        <source>Copy</source>
+        <target>Copier</target>
+      </trans-unit>
       <trans-unit id="39be0d4959220379867e8c58f69dbece">
         <source>This task cancels the unpaid orders, and reads again the payments Wajub could not tell about. PrestaShop runs it every hour when its Cron tasks manager module is installed. Otherwise, ask your web host to call this address every 15 minutes. Keep it private.</source>
         <target>Cette tâche annule les commandes impayées, et relit les paiements dont Wajub n’a pas pu donner l’état. PrestaShop la lance toutes les heures quand son module Gestionnaire de tâches cron est installé. Sinon, demandez à votre hébergeur d’appeler cette adresse toutes les 15 minutes. Gardez-la privée.</target>
+      </trans-unit>
+      <trans-unit id="812dbc6636dfb575894885e170a15dc4">
+        <source>This task cancels the unpaid orders, and reads again the payments Wajub could not tell about. Its address is shown to the employees who can change these settings.</source>
+        <target>Cette tâche annule les commandes impayées, et relit les paiements dont Wajub n’a pas pu donner l’état. Son adresse est montrée aux employés qui peuvent modifier ces réglages.</target>
       </trans-unit>
     </body>
   </file>
@@ -1505,10 +1669,6 @@
       <trans-unit id="b5bd5c5780174a7e22fbaf9e205e1798">
         <source>Webhook address of this shop</source>
         <target>URL du webhook de cette boutique</target>
-      </trans-unit>
-      <trans-unit id="5fb63579fc981698f97d55bfecb213ea">
-        <source>Copy</source>
-        <target>Copier</target>
       </trans-unit>
       <trans-unit id="1568addff3ead708c9b66c93fbba0425">
         <source>Wajub’s deliveries reach this shop through the webhook saved for %scope%, whose last delivery shows below. Registering here gives this shop its own webhook, at the address above.</source>
@@ -1586,6 +1746,18 @@
         <source>Set the webhook up by hand</source>
         <target>Configurer le webhook manuellement</target>
       </trans-unit>
+      <trans-unit id="e70e86dcb8fe10447543e7823cf49c11">
+        <source>This shop’s address is local: Wajub cannot reach it, and the Wajub Dashboard takes no endpoint at it. Until the shop is online, receive its Sandbox events on this computer with the Wajub CLI:</source>
+        <target>L’adresse de cette boutique est locale : Wajub ne peut pas la joindre, et le tableau de bord Wajub n’y accepte pas de point de terminaison. En attendant que la boutique soit en ligne, recevez ses événements de test sur cet ordinateur avec le CLI Wajub :</target>
+      </trans-unit>
+      <trans-unit id="23668a4acbb1026a93c20e717829f3a2">
+        <source>Run this command, and keep it running while you test:</source>
+        <target>Lancez cette commande, et laissez-la tourner pendant vos essais :</target>
+      </trans-unit>
+      <trans-unit id="a4a2c755e4216b982b12f336aed276ec">
+        <source>Paste the secret that “wajub listen --print-secret” shows into Sandbox signing secret below.</source>
+        <target>Collez le secret qu’affiche « wajub listen --print-secret » dans « Secret de signature de test » ci-dessous.</target>
+      </trans-unit>
       <trans-unit id="0a0421c966c31b033c89e1d84e73fd1c">
         <source>In the Wajub Dashboard, under Developers, Webhooks, add an endpoint with the address above, in the environment you use.</source>
         <target>Dans le tableau de bord Wajub, sous Développeurs, Webhooks, ajoutez un point de terminaison avec l’adresse ci-dessus, dans l’environnement que vous utilisez.</target>
@@ -1616,15 +1788,27 @@
       </trans-unit>
     </body>
   </file>
-  <file original="modules/wajub/views/templates/hook/admin-key-notice.tpl" source-language="en-US" target-language="fr-FR" datatype="plaintext">
+  <file original="modules/wajub/views/templates/hook/admin-badge.tpl" source-language="en-US" target-language="fr-FR" datatype="plaintext">
     <body>
-      <trans-unit id="eb3cc52fd21dcb11359c9c4e1b7da9fa">
-        <source>Your Wajub key has expired.</source>
-        <target>Votre clé Wajub a expiré.</target>
+      <trans-unit id="52d11c09d2b566e05a92a659a6a28013">
+        <source>Wajub takes test payments: no real money moves. Open the settings to go live.</source>
+        <target>Wajub accepte des paiements de test : aucun argent réel ne circule. Ouvrez les paramètres pour passer en production.</target>
       </trans-unit>
-      <trans-unit id="79378470dea88f50cfe5a723ce132132">
-        <source>Your Wajub key expires soon.</source>
-        <target>Votre clé Wajub expire bientôt.</target>
+      <trans-unit id="301d23f6785fce546a713291966d6b32">
+        <source>Wajub · Sandbox</source>
+        <target>Wajub · Test</target>
+      </trans-unit>
+    </body>
+  </file>
+  <file original="modules/wajub/views/templates/hook/admin-notice.tpl" source-language="en-US" target-language="fr-FR" datatype="plaintext">
+    <body>
+      <trans-unit id="bb8af34292bb946b12251dd8c7f1131b">
+        <source>Scheduled task address (keep it private)</source>
+        <target>Adresse de la tâche planifiée (gardez-la privée)</target>
+      </trans-unit>
+      <trans-unit id="90eadfc51690506588d9bbfd6c52be79">
+        <source>Hide for 7 days</source>
+        <target>Masquer pendant 7 jours</target>
       </trans-unit>
     </body>
   </file>
@@ -1726,9 +1910,9 @@
         <source>Accept Mobile Money, cards and other payment methods with Wajub.</source>
         <target>Acceptez Mobile Money, les cartes bancaires et d’autres moyens de paiement avec Wajub.</target>
       </trans-unit>
-      <trans-unit id="095590bb07c468f67ca485d2d6a7cb7b">
-        <source>Uninstalling removes the Wajub settings and keys. Orders, their payments and the record of their Wajub payments stay. Continue?</source>
-        <target>La désinstallation supprime les paramètres et les clés Wajub. Les commandes, leurs paiements et l’historique de leurs paiements Wajub sont conservés. Continuer ?</target>
+      <trans-unit id="8dd5538f1efdf7365013b6be060d45f5">
+        <source>Uninstalling removes the Wajub settings, keys and signing secrets. It keeps your orders, their payments, and the record of their Wajub payments, refunds and notes (the tables wajub_payment, wajub_refund and wajub_order_note), which a new install finds again. Continue?</source>
+        <target>La désinstallation supprime les paramètres, les clés et les secrets de signature Wajub. Elle garde vos commandes, leurs paiements, et l’historique de leurs paiements, remboursements et notes Wajub (les tables wajub_payment, wajub_refund et wajub_order_note), qu’une nouvelle installation retrouve. Continuer ?</target>
       </trans-unit>
       <trans-unit id="4a97366bbd380eb4a9631440fe516430">
         <source>Wajub needs the PHP cURL extension, which this server does not have. Ask your web host to turn it on.</source>
@@ -1750,9 +1934,21 @@
         <source>Your profile cannot open the Wajub settings. An administrator can give it access in Advanced Parameters &gt; Team &gt; Permissions, under Payment &gt; Wajub.</source>
         <target>Votre profil ne peut pas ouvrir les paramètres Wajub. Un administrateur peut lui en donner l’accès dans Paramètres avancés &gt; Équipe &gt; Permissions, sous Paiement &gt; Wajub.</target>
       </trans-unit>
+      <trans-unit id="30fc031ca876b9512b6ecd6faa94d2c8">
+        <source>The refund could not be made through Wajub, and no credit slip was made. Try again in a moment. Should Wajub have refunded part of it meanwhile, that part is recorded on the order as a credit slip once Wajub confirms it.</source>
+        <target>Le remboursement n’a pas pu être fait par Wajub, et aucun avoir n’a été créé. Réessayez dans un instant. Si Wajub en a remboursé une partie entre-temps, cette partie est enregistrée sur la commande comme un avoir dès que Wajub le confirme.</target>
+      </trans-unit>
       <trans-unit id="ff3bacfd2e1a14d6c86781b94883ba34">
         <source>Credit slip %slip% (%amount%) was made while the order was being updated: Wajub did not refund it. Refund the customer from the Wajub Dashboard.</source>
         <target>L’avoir %slip% (%amount%) a été créé pendant une mise à jour de la commande : Wajub ne l’a pas remboursé. Remboursez le client depuis le tableau de bord Wajub.</target>
+      </trans-unit>
+      <trans-unit id="eb3cc52fd21dcb11359c9c4e1b7da9fa">
+        <source>Your Wajub key has expired.</source>
+        <target>Votre clé Wajub a expiré.</target>
+      </trans-unit>
+      <trans-unit id="79378470dea88f50cfe5a723ce132132">
+        <source>Your Wajub key expires soon.</source>
+        <target>Votre clé Wajub expire bientôt.</target>
       </trans-unit>
       <trans-unit id="df46dc48607e272920fd771177abea11">
         <source>Wajub could not erase this customer’s data. Try again.</source>

@@ -16,6 +16,8 @@ use Wajub\PrestaShop\Order\Ledger;
 use Wajub\PrestaShop\Order\OrderView;
 use Wajub\PrestaShop\Order\Settlement;
 use Wajub\PrestaShop\Order\ShopOrders;
+use Wajub\PrestaShop\Payment\ChannelLabels;
+use Wajub\PrestaShop\Payment\Methods;
 use Wajub\PrestaShop\Payment\PaymentRecord;
 use Wajub\PrestaShop\Payment\PaymentStore;
 use Wajub\PrestaShop\Support\Amount;
@@ -152,9 +154,49 @@ final class StatusAnswer
     }
 
     /**
+     * What the order's confirmation page shows of its payment
+     * (Wajub::hookDisplayPaymentReturn()), for an order not paid yet in one
+     * of `$states` (waiting for its payment, part paid, payment error):
+     * `panel` 'waiting' while its payment of the moment is being confirmed,
+     * which the page follows (order-status.js), saying what was received
+     * already (the rest under way: `paid_so_far`); 'partial' once a payment
+     * short of the total counts, with what is left, and "Pay the rest" when
+     * the order can be paid from its pages (`can_pay`); '' otherwise.
+     * `phone`: a payment the payer may still approve on their phone (Mobile
+     * Money's form, or Wajub's page with Mobile Money or a method not known
+     * yet), never a card's.
+     *
+     * @param list<int> $states
+     *
+     * @return array{panel: string, phone: bool, paid_so_far: string, can_pay: bool}
+     */
+    public function confirmationPanel(OrderView $order, array $states): array
+    {
+        $current = $this->payments->current($order->id);
+        if ($order->paid || $current === null || !in_array($order->stateId, $states, true)) {
+            return ['panel' => '', 'phone' => false, 'paid_so_far' => '', 'can_pay' => false];
+        }
+        $line = $this->payerLine($order, $current->environment);
+        $waiting = $line === '' || !$current->isCounted();
+
+        return [
+            'panel' => $waiting ? 'waiting' : 'partial',
+            'phone' => $current->method === Methods::MOBILE_MONEY
+                || ($current->mode === PaymentRecord::MODE_HOSTED && $current->method !== Methods::CARD && !ChannelLabels::isCard($current->channel)),
+            'paid_so_far' => $line,
+            'can_pay' => !$waiting && $this->payable($order),
+        ];
+    }
+
+    /**
      * "4 000 FCFA already received; 6 000 FCFA left to pay." for the payer;
      * '' while nothing was received. `$open`: what a payment still paid in
      * instalments collected so far.
+     *
+     * A cart that ships in several packages became several orders, which
+     * the customer's account lists apart under one reference, each with
+     * its own total: the amounts are those of them all, and the line says
+     * so, or the payer reading it on each order would think each owes it.
      */
     public function payerLine(OrderView $order, string $environment, float $open = 0.0): string
     {
@@ -163,11 +205,15 @@ final class StatusAnswer
             return '';
         }
         $left = max(0.0, Amount::normalize(Ledger::total($order) - $received, $order->currency));
-
-        return $this->t->trans('%received% already received; %left% left to pay.', [
+        $parameters = [
             '%received%' => $this->money->format($received, $order->currency),
             '%left%' => $this->money->format($left, $order->currency),
-        ], 'Modules.Wajub.Shop');
+        ];
+        if (count($order->ids) > 1) {
+            return $this->t->trans('%received% already received; %left% left to pay, for all your orders of reference %reference% together.', $parameters + ['%reference%' => $order->reference], 'Modules.Wajub.Shop');
+        }
+
+        return $this->t->trans('%received% already received; %left% left to pay.', $parameters, 'Modules.Wajub.Shop');
     }
 
     /**

@@ -79,10 +79,10 @@ class WajubWebhookModuleFrontController extends ModuleFrontController
         $raw = (string) Tools::file_get_contents('php://input');
         $signature = $this->header('X-Wajub-Signature', 200);
         $timestamp = $this->header('X-Wajub-Timestamp', 32);
-        $scope = Tools::getValue('scope', '');
+        $scope = substr((string) Tools::getValue('scope', ''), 0, 16);
 
         try {
-            $services = $this->module->webhookServices(is_string($scope) ? substr($scope, 0, 16) : '');
+            $services = $this->module->webhookServices($scope);
             $answer = $services->receiver()->receive($raw, $signature, $timestamp);
         } catch (Throwable $e) {
             // A failure of the shop (its database, most often): Wajub sends

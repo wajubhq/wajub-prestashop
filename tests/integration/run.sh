@@ -30,7 +30,7 @@
 
 set -euo pipefail
 
-MAJOR="${1:?usage: run.sh <8|9>}"
+MAJOR="${1:?usage: run.sh <81|8|9>}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ENV_DIR="${WAJUB_PS_ENV:-$HOME/.cache/wajub-prestashop/env}"
 source "$ENV_DIR/lib.sh"
@@ -172,7 +172,7 @@ URL="$FRIENDLY_URL"
 
 section "Back office"
 admin_token() {
-    if [ "$MAJOR" = 8 ]; then
+    if [ "$PS_FAMILY" = 8 ]; then
         # PrestaShop 8: a token per employee and page (its tab id, new at
         # each install), from the shop's cookie key.
         php_in_shop 'define("_PS_ADMIN_DIR_", getcwd() . "/admin-dev"); require "config/config.inc.php"; $e = new Employee(1); echo Tools::getAdminToken("AdminWajubConfiguration" . (int) Tab::getIdFromClassName("AdminWajubConfiguration") . (int) $e->id);' | tail -1
@@ -182,7 +182,7 @@ admin_token() {
 }
 login_page="$(curl -sL -c "$jar" -b "$jar" --max-time 120 "$PS_ADMIN_URL")"
 SESSION_TOKEN=""
-if [ "$MAJOR" = 8 ]; then
+if [ "$PS_FAMILY" = 8 ]; then
     curl -sL -c "$jar" -b "$jar" --max-time 120 -o /dev/null --data-urlencode "email=$ADMIN_EMAIL" --data-urlencode "passwd=$ADMIN_PASSWORD" -d submitLogin=1 "${PS_ADMIN_URL}index.php?controller=AdminLogin"
 else
     token="$(grep -oE 'id="_token" name="_token" value="[^"]+"' <<<"$login_page" | sed 's/.*value="//; s/"$//')"
@@ -250,6 +250,8 @@ contains "Test connection: connected, to the business of the key" "$ajax" 'Stub 
 ajax="$(curl -s -c "$jar" -b "$jar" --max-time 120 -w '\n%{http_code}' -d ajax=1 -d action=register_webhooks -d "wajub_token=$WTOKEN" "$PAGE_URL&ajax=1")"
 expect "Register automatically answers" "${ajax##*$'\n'}" 200
 contains "that a local shop is set up by hand" "$ajax" '"manual":true'
+contains "with the Wajub CLI's command for its address" "$ajax" 'wajub listen --forward-to http:'
+lacks "never a tunnel to expose it" "$ajax" 'tunnel'
 user_agents="$(jq -r '.user_agent' "$STUB_LOG" | sort -u)" || true
 if [ -n "$user_agents" ] && ! grep -qvE '^Wajub-PrestaShop/[0-9.]+ PrestaShop/[0-9.]+ PHP/[0-9.]+$' <<<"$user_agents"; then
     ok "the API is called as Wajub-PrestaShop/<module> PrestaShop/<shop> PHP/<php> ($(head -1 <<<"$user_agents"))"
@@ -278,6 +280,8 @@ answer="$(post "${BODY/$EVENT/${EVENT}_old}" "$(date +%s)" "$SECRET")"
 expect "and the secret it replaced no longer verifies" "${answer##*$'\n'}" 403
 tab_page="$(curl -sL -c "$jar" -b "$jar" --max-time 120 "$PAGE_URL&wajub_tab=webhooks")"
 contains "the Webhooks tab shows that delivery" "$tab_page" 'payment.failed'
+contains "a local shop: the Wajub CLI's command, ready to copy" "$tab_page" 'id="wajub-listen-command" value="wajub listen --forward-to http://localhost:'
+lacks "never an endpoint to add in the Dashboard" "$tab_page" 'add an endpoint with the address above'
 
 section "Settings for one shop of two (multistore)"
 SECOND_SHOP="$(shop_checks multistore-on | tail -1)" || true

@@ -21,7 +21,22 @@ if (!defined('_PS_VERSION_')) {
  */
 interface ShopOrders
 {
+    /**
+     * The order, as one with the other orders its cart became: an order of
+     * a cart that ships in several packages (several carriers or
+     * warehouses) is read as the whole group, under its first order's id
+     * (OrderView), whichever of them `$idOrder` is.
+     */
     public function find(int $idOrder): ?OrderView;
+
+    /**
+     * The id the group of `$idOrder` goes by (OrderView::$id): the first of
+     * the orders its cart became, which holds their Wajub payments, their
+     * notes and their lock (`order:<id>`). `$idOrder` itself for an order
+     * alone, or one the shop does not have. One query, for a lock taken
+     * before the order is read.
+     */
+    public function leadId(int $idOrder): int;
 
     /**
      * Adds a payment to the order (an OrderPayment, under its reference),
@@ -47,6 +62,13 @@ interface ShopOrders
     public function note(OrderView $order, string $key, string $message): bool;
 
     /**
+     * Takes back the note of `$key`, written ahead of what it warns of,
+     * which did not happen after all (Refund\PendingSlips): gone from the
+     * order's Wajub panel, and free to be written again.
+     */
+    public function forgetNote(OrderView $order, string $key): void;
+
+    /**
      * The order's notes, newest first.
      *
      * @return list<array{key: string, message: string, date: string}>
@@ -56,19 +78,31 @@ interface ShopOrders
     /**
      * Records on the order a refund made outside PrestaShop (in the Wajub
      * Dashboard): a credit slip of `$amount`, tax included, with no
-     * products, as PrestaShop makes one for an amount alone. Its id.
+     * products, as PrestaShop makes one for an amount alone. The orders a
+     * cart that ships in several packages became share it, each up to what
+     * is left of its own total, the first one first (Ledger::slipShares()):
+     * one slip each. The (first) slip's id.
      */
     public function addSlip(OrderView $order, float $amount): int;
 
-    /** The order's newest credit slip, 0 for none. */
+    /** The newest credit slip of any order of the group, 0 for none. */
     public function lastSlip(OrderView $order): int;
 
     /**
-     * What the order's credit slips refund, tax included: those the
-     * merchant made in the back office, through Wajub or not, and those
-     * that record refunds made in the Wajub Dashboard.
+     * What the credit slips of the group's orders refund, tax included: those
+     * the merchant made in the back office, through Wajub or not, and those
+     * that record refunds made in the Wajub Dashboard, each read as it gives
+     * back (slipGivesBack()).
      */
     public function refundedOnOrder(OrderView $order): float;
+
+    /**
+     * What one credit slip gives the customer back, tax included, as
+     * PrestaShop computed its refund: its products (the order's vouchers
+     * taken off when it took them off), or its amount alone, and its
+     * shipping (Refund\SlipTotals::givenBack()).
+     */
+    public function slipGivesBack(int $idOrderSlip): float;
 
     /**
      * Orders of the module in `$stateId`, the oldest first, at most

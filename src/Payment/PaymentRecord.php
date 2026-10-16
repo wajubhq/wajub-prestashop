@@ -56,6 +56,16 @@ final class PaymentRecord
     /** Wajub's hosted page (Other payment methods, or a form that could not load). */
     public const MODE_HOSTED = 'hosted';
 
+    /** In its metadata: when Wajub made it (unix time), as its `created_at` said when it counted. */
+    public const MADE_AT = 'made_at';
+
+    /**
+     * In its metadata: when the shop cancelled it with Wajub itself (unix
+     * time), nobody having paid it (Order\OpenPayments): its webhook then
+     * says so, never that the customer left it.
+     */
+    public const CANCELLED_BY_SHOP = 'cancelled_by_shop';
+
     public int $id = 0;
 
     public string $paymentId = '';
@@ -107,7 +117,10 @@ final class PaymentRecord
     /**
      * What the module keeps of it beyond the columns: `token` (the session
      * the payment form loads), `authorization_url` (its hosted page), `key`
-     * (the fingerprint of the key that made it, never the key).
+     * (the fingerprint of the key that made it, never the key), `made_at`
+     * (MADE_AT), `cancelled_by_shop` (CANCELLED_BY_SHOP), and while it
+     * could not count, when it is read again
+     * (`recount_at`, `recount_tries`: Order\Recounts).
      *
      * @var array<string, string>
      */
@@ -146,5 +159,31 @@ final class PaymentRecord
     public function authorizationUrl(): string
     {
         return $this->meta('authorization_url');
+    }
+
+    /**
+     * When the payment was made: as Wajub dated it (its `created_at`, kept
+     * when it counted, MADE_AT), else when the shop started it; 0 when
+     * nothing says. What tells the payment made last, which a refund takes
+     * back from first (Order\Ledger::refundPlan()), as the plugin tells it:
+     * not the order the shop wrote them in.
+     */
+    public function madeAt(): int
+    {
+        $at = (int) $this->meta(self::MADE_AT);
+        if ($at > 0) {
+            return $at;
+        }
+        $started = $this->dateAdd !== '' ? strtotime($this->dateAdd) : false;
+
+        return $started !== false && $started > 0 ? $started : 0;
+    }
+
+    /** A date as Wajub gives one (ISO 8601), in unix time; 0 for none. */
+    public static function timeOf(mixed $value): int
+    {
+        $time = is_string($value) && trim($value) !== '' ? strtotime($value) : false;
+
+        return $time !== false && $time > 0 ? $time : 0;
     }
 }

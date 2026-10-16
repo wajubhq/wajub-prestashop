@@ -45,12 +45,12 @@ class WajubStatusModuleFrontController extends ModuleFrontController
         }
 
         $services = $this->module->servicesFor((int) $order->id_shop);
-        if (!Tokens::matches($services->tokens()->order((int) $order->id, (string) $order->secure_key), $this->text('token', 64))) {
+        if (!Tokens::matches($services->tokens()->order((int) $order->id, (string) $order->secure_key), $this->line((string) Tools::getValue('token', ''), 64))) {
             $this->answerJson(403, ['success' => false, 'data' => ['message' => '']]);
         }
 
         $lock = $services->lock();
-        $name = 'order:' . (int) $order->id;
+        $name = 'order:' . $services->orders()->leadId((int) $order->id);
         if (!$lock->acquire($name, self::LOCK_WAIT)) {
             // Being settled by another request: the next check says.
             $this->answerJson(200, ['success' => true, 'data' => ['status' => 'pending', 'processing' => true]]);

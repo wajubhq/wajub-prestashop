@@ -12,6 +12,9 @@
   <div class="alert alert-info">
     {l s='Each payment method shows at checkout only when your Wajub account offers it for the order: its currency, amount and country.' d='Modules.Wajub.Admin'}
   </div>
+  {if $wajub.plain_http}
+    <div class="alert alert-warning" data-wajub-plain-http>{$wajub.plain_http|escape:'htmlall':'UTF-8'}</div>
+  {/if}
 
   {foreach from=$wajub.methods item=method}
     {assign var=prefix value="wajub-"|cat:$method.kind}
@@ -130,8 +133,19 @@
       <div class="form-group">
         <label class="control-label col-lg-3" for="wajub-cron-url">{l s='Scheduled task' d='Modules.Wajub.Admin'}</label>
         <div class="col-lg-9">
-          <input type="text" class="form-control" id="wajub-cron-url" value="{$wajub.cron_url|escape:'htmlall':'UTF-8'}" readonly aria-describedby="wajub-cron-url-help">
-          <p class="help-block" id="wajub-cron-url-help">{l s='This task cancels the unpaid orders, and reads again the payments Wajub could not tell about. PrestaShop runs it every hour when its Cron tasks manager module is installed. Otherwise, ask your web host to call this address every 15 minutes. Keep it private.' d='Modules.Wajub.Admin'}</p>
+          {if $wajub.cron_url !== ''}
+            <div class="input-group">
+              <input type="text" class="form-control" id="wajub-cron-url" value="{$wajub.cron_url|escape:'htmlall':'UTF-8'}" readonly spellcheck="false" aria-describedby="wajub-cron-url-help wajub-cron-last-run">
+              <span class="input-group-btn">
+                <button type="button" class="btn btn-default" data-wajub-copy="#wajub-cron-url">{l s='Copy' d='Modules.Wajub.Admin'}</button>
+              </span>
+            </div>
+            <p class="help-block" role="status" aria-live="polite" data-wajub-copy-status></p>
+            <p class="help-block" id="wajub-cron-url-help">{l s='This task cancels the unpaid orders, and reads again the payments Wajub could not tell about. PrestaShop runs it every hour when its Cron tasks manager module is installed. Otherwise, ask your web host to call this address every 15 minutes. Keep it private.' d='Modules.Wajub.Admin'}</p>
+          {else}
+            <p class="form-control-static" id="wajub-cron-url-help">{l s='This task cancels the unpaid orders, and reads again the payments Wajub could not tell about. Its address is shown to the employees who can change these settings.' d='Modules.Wajub.Admin'}</p>
+          {/if}
+          <p class="help-block" id="wajub-cron-last-run">{$wajub.task_last_run|escape:'htmlall':'UTF-8'}</p>
         </div>
       </div>
     </fieldset>

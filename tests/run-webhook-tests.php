@@ -332,6 +332,18 @@ check($result['status'] === 'manual' && $result['reason'] === 'https_required' &
 $GLOBALS['shop']->webhookUrl = 'https://boutique.test/module/wajub/webhook';
 $result = $s->webhookRegistration()->registerAll()['live'];
 check($result['status'] === 'manual' && $result['reason'] === 'private_url' && str_contains($result['message'], 'boutique.test'), 'a local address cannot be reached: the manual steps');
+check(str_contains($result['message'], 'Live webhooks work once the shop is online, at an https:// address.') && !str_contains($result['message'], 'wajub listen') && !str_contains($result['message'], 'tunnel'), 'in Live: once the shop is online, no Wajub CLI to forward live events to a computer: ' . $result['message']);
+// In Sandbox, the Wajub CLI's `wajub listen`: no tunnel, no endpoint in the
+// Dashboard, its own signing secret pasted by hand.
+$s->settings()->setSecretKey('sandbox', key_for('sandbox'));
+$GLOBALS['shop']->webhookUrl = 'http://localhost:8082/en/module/wajub/webhook';
+$GLOBALS['http']->reset();
+$result = $s->webhookRegistration()->registerAll()['sandbox'];
+check($result['reason'] === 'private_url' && $GLOBALS['http']->sent === [] && $result['message'] === 'Wajub cannot reach localhost: it is a local or private address. Automatic setup works once the shop is online. Meanwhile, to receive Sandbox events on this computer, run “wajub listen --forward-to http://localhost:8082/en/module/wajub/webhook” with the Wajub CLI, and paste the secret that “wajub listen --print-secret” shows into Sandbox signing secret, under Set the webhook up by hand: no endpoint is added in the Wajub Dashboard.', 'in Sandbox: the Wajub CLI command for this address, and where its secret goes, never a tunnel: ' . $result['message']);
+check(WebhookRegistration::listenCommand('http://localhost:8082/module/wajub/webhook') === 'wajub listen --forward-to http://localhost:8082/module/wajub/webhook'
+    && WebhookRegistration::listenCommand('http://localhost:8082/module/wajub/webhook?scope=s2') === "wajub listen --forward-to 'http://localhost:8082/module/wajub/webhook?scope=s2'"
+    && WebhookRegistration::listenCommand('http://shop/index.php?fc=module&module=wajub&controller=webhook') === "wajub listen --forward-to 'http://shop/index.php?fc=module&module=wajub&controller=webhook'", 'the command quotes an address a shell would read otherwise (? and &)');
+$GLOBALS['shop']->webhookUrl = 'https://boutique.test/module/wajub/webhook';
 foreach (['https://localhost/x' => 'private_url', 'https://192.168.1.5/x' => 'private_url', 'https://10.0.0.1/x' => 'private_url', 'https://shop/x' => 'private_url', 'https://8.8.8.8/x' => '', 'http://boutique.cm/x' => '', 'nonsense' => 'invalid_url'] as $url => $problem) {
     check(WebhookRegistration::localAddressProblem($url, 'sandbox') === $problem, "localAddressProblem({$url}) is '{$problem}'");
 }
@@ -346,6 +358,48 @@ $GLOBALS['http']->routes = ['GET ' . API . '/webhooks' => [network_down()]];
 check($s->webhookRegistration()->registerAll()['sandbox']['status'] === 'error', 'Wajub out of reach: an error to try again');
 $GLOBALS['http']->routes = ['GET ' . API . '/webhooks' => [[200, ['items' => []]]], 'POST ' . API . '/webhooks' => [[201, ['id' => 'we_9']]]];
 check($s->webhookRegistration()->registerAll()['sandbox']['reason'] === 'no_secret', 'an endpoint created without its secret says where to copy it from');
+
+// What the webhook listens to: the plugin's events, and those that carry what
+// the handlers keep besides. Wajub has no payment.partial: a payment between
+// two instalments says so in its payment.split.* events.
+foreach (['payment.succeeded', 'payment.failed', 'payment.expired', 'payment.cancelled', 'payment.processing', 'refund.created', 'refund.succeeded', 'refund.failed', 'refund.cancelled', 'dispute.created', 'dispute.updated', 'dispute.won', 'dispute.lost', 'dispute.closed'] as $event) {
+    check(in_array($event, WebhookRegistration::EVENTS, true), "the webhook listens to {$event}, as the plugin's");
+}
+foreach (['payment.split.processing', 'payment.split.succeeded', 'payment.split.failed', 'refund.processing'] as $event) {
+    check(in_array($event, WebhookRegistration::EVENTS, true), "and to {$event}");
+}
+check(!in_array('payment.partial', WebhookRegistration::EVENTS, true) && count(WebhookRegistration::EVENTS) === count(array_unique(WebhookRegistration::EVENTS)), 'never an event Wajub does not send, nor one twice');
+
+// A shop registered before is given the events it lacks (upgrade-1.0.1.php):
+// nothing created, no secret changed.
+$s = services();
+$s->settings()->setSecretKey('sandbox', key_for('sandbox'));
+$s->settings()->setWebhookSecret('sandbox', SANDBOX_SECRET);
+$s->settings()->setWebhookEndpoint('sandbox', ['id' => 'we_up', 'url' => 'https://boutique.cm/module/wajub/webhook', 'at' => time()]);
+$older = ['payment.succeeded', 'payment.failed', 'payment.expired', 'payment.cancelled', 'payment.processing', 'refund.created', 'refund.succeeded'];
+$GLOBALS['http']->routes = [
+    'GET ' . API . '/webhooks' => [[200, ['items' => [['id' => 'we_other', 'url' => 'https://boutique.cm/module/wajub/webhook'], ['id' => 'we_up', 'url' => 'https://boutique.cm/module/wajub/webhook', 'events' => $older, 'active' => true]]]]],
+    'PUT ' . API . '/webhooks/we_up' => [[200, ['id' => 'we_up']]],
+];
+$GLOBALS['http']->reset();
+$result = $s->webhookRegistration()->addMissingEvents();
+$put = $GLOBALS['http']->json(1);
+check($result === ['sandbox' => 'updated', 'live' => 'none'] && $GLOBALS['http']->routes() === ['GET ' . API . '/webhooks?per_page=100&search=https%3A%2F%2Fboutique.cm%2Fmodule%2Fwajub%2Fwebhook', 'PUT ' . API . '/webhooks/we_up'], 'upgrade: the endpoint the shop registered, found by its id, given the events it lacks: ' . json_encode([$result, $GLOBALS['http']->routes()]));
+check(array_values(array_diff(WebhookRegistration::EVENTS, $put['events'] ?? [])) === [] && array_slice($put['events'] ?? [], 0, count($older)) === $older && !isset($put['active']), 'upgrade: its events kept, the new ones added, nothing else changed: ' . json_encode($put));
+check($s->settings()->webhookSecret('sandbox') === SANDBOX_SECRET && $s->settings()->webhookEndpoint('sandbox')['id'] === 'we_up', 'upgrade: its secret and endpoint stay');
+$GLOBALS['http']->routes = ['GET ' . API . '/webhooks' => [[200, ['items' => [['id' => 'we_up', 'url' => 'https://boutique.cm/module/wajub/webhook', 'events' => ['*']]]]]]];
+$GLOBALS['http']->reset();
+check($s->webhookRegistration()->addMissingEvents()['sandbox'] === 'current' && count($GLOBALS['http']->sent) === 1, 'upgrade: an endpoint of every event (*): left as it is');
+$GLOBALS['http']->routes = ['GET ' . API . '/webhooks' => [[200, ['items' => []]]]];
+$GLOBALS['http']->reset();
+check($s->webhookRegistration()->addMissingEvents()['sandbox'] === 'none' && count($GLOBALS['http']->sent) === 1, 'upgrade: an endpoint Wajub no longer has: nothing created');
+$GLOBALS['http']->routes = ['GET ' . API . '/webhooks' => [network_down()]];
+check($s->webhookRegistration()->addMissingEvents()['sandbox'] === 'error', 'upgrade: Wajub out of reach: said, never an exception that would stop the upgrade');
+$shop2 = services([], new Scope(2, 1), true);
+$shop2->settings()->setSecretKey('sandbox', key_for('sandbox', 'B'));
+$GLOBALS['http']->reset();
+check($shop2->webhookRegistration()->addMissingEvents() === ['sandbox' => 'none', 'live' => 'none'] && $GLOBALS['http']->sent === [], 'upgrade: a shop that uses the endpoint of all shops has none of its own to change');
+check($s->settings()->webhookEndpointsEverywhere() === ['all'], 'upgrade: the scopes that registered an endpoint of their own: ' . json_encode($s->settings()->webhookEndpointsEverywhere()));
 
 $s = services();
 $s->settings()->setWebhookEndpoint('sandbox', ['id' => 'we_1', 'url' => 'https://boutique.cm/module/wajub/webhook/', 'at' => time()]);

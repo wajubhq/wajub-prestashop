@@ -21,18 +21,29 @@ if (PHP_SAPI !== 'cli') {
  * - the license header (@author, @copyright, @license) in every PHP, JS,
  *   CSS and template file;
  * - every PHP file but index.php stops when PrestaShop did not load it;
- * - no function the Addons validator refuses, nor debugging left behind;
- * - no request value read but through Tools (getValue(), getAllValues()),
- *   nor the server's globals ($_SERVER: Symfony's Request reads them), no
+ * - no function the Addons validator refuses, nor debugging left behind,
+ *   nor a shutdown function (the module's end of request is Symfony's
+ *   kernel.terminate), nor base64 (pictures are files);
+ * - no request value read but through Tools::getValue(), by its name
+ *   written out and cast to its type as it is read, nor the server's
+ *   globals ($_SERVER: Symfony's Request reads them), nor PHP's session
+ *   (messages for the next page go through PrestaShop's notifications), no
  *   file read or copied but through Tools, as the validator asks;
- * - no HTML printed from PHP: templates draw the pages;
+ * - no HTML printed from PHP: templates draw the pages, and link no script
+ *   or style themselves (PrestaShop's media lists do);
  * - every variable a template prints is escaped (`|escape:'htmlall':'UTF-8'`,
  *   or a number: `|intval`, `|floatval`), and every wording of a template
  *   is in one of the module's domains;
  * - config.xml says what the module class says: its version
  *   (Wajub::VERSION), name, tab, author, display name, description and
  *   uninstall confirmation; and each e-mail template exists in English and
- *   French, as HTML and as text.
+ *   French, as HTML and as text;
+ * - the PrestaShop versions the module says it runs on end at '9.99.99',
+ *   written out: never _PS_VERSION_, which the validator rejects;
+ * - a .htaccess at the root refuses a request for any PHP file of the
+ *   module, on Apache 2.2 (Deny from all) and 2.4 (Require all denied);
+ * - in a zip (no bin/ beside the module), composer.json without the
+ *   developers' part (require-dev, scripts).
  *
  * Prints each problem, and exits 1 when there is one.
  */
@@ -52,7 +63,8 @@ $iterator = new RecursiveIteratorIterator(
             $first = explode('/', $relative)[0];
 
             // Dot files (.php-cs-fixer.dist.php, .gitignore) are the
-            // developers' own, and never ship either.
+            // developers' own, and never ship either; but .htaccess, which
+            // is checked on its own below.
             return !in_array($first, $skipped, true) && $first[0] !== '.';
         }
     ),
@@ -71,6 +83,10 @@ $forbiddenPhp = [
     '/(?<!::)\bfile_get_contents\s*\(/' => 'file_get_contents(): use Tools::file_get_contents()',
     '/(?<!::|->)\bcopy\s*\(/' => 'copy(): use Tools::copy()',
     '/(?<!\w)echo\s+[\'"]\s*</' => 'HTML printed from PHP: use a template',
+    '/\$_SESSION\b/' => '$_SESSION: messages for the next page go through PrestaShop\'s notifications (Checkout\\KeptNotices)',
+    '/\bregister_shutdown_function\s*\(/' => 'register_shutdown_function(): the end of a back office request is Symfony\'s kernel.terminate (Refund\\RefundFormsEnd)',
+    '/\bbase64_(en|de)code\s*\(/' => 'base64: ship pictures as files',
+    '/Tools::getValue\(\s*(?![\'"])/' => 'Tools::getValue() of a name not written out',
 ];
 $forbiddenJs = [
     '/\bconsole\.(log|debug|info|dir|table)\s*\(/' => 'console output',
@@ -110,6 +126,14 @@ foreach ($iterator as $file) {
                 $problems[] = $relative . ': ' . $why;
             }
         }
+        // Each value cast to its type as it is read.
+        if (preg_match_all('/(.{0,12})Tools::getValue\(\s*([\'"][^\'"]*[\'"])/', $code, $reads, PREG_SET_ORDER) > 0) {
+            foreach ($reads as $read) {
+                if (preg_match('/\((int|string|bool|float|array)\)\s*\\\\?$/', $read[1]) !== 1) {
+                    $problems[] = $relative . ': Tools::getValue(' . $read[2] . ') is not cast to its type as it is read';
+                }
+            }
+        }
     } elseif ($extension === 'tpl') {
         // Smarty comments say nothing to anyone.
         $code = preg_replace('/\{\*.*?\*\}/s', '', $content) ?? $content;
@@ -119,6 +143,9 @@ foreach ($iterator as $file) {
                     $problems[] = $relative . ': ' . $output . ' is printed unescaped: add |escape:\'htmlall\':\'UTF-8\'';
                 }
             }
+        }
+        if (preg_match('/<script\b[^>]*\bsrc=|<link\b[^>]*\bstylesheet/i', $code) === 1) {
+            $problems[] = $relative . ': a script or a style linked from the template: add it through PrestaShop (addJS(), addCSS(), registerJavascript())';
         }
         if (preg_match_all('/\{l\s[^}]*\}/', $code, $wordings) > 0) {
             foreach ($wordings[0] as $wording) {
@@ -174,6 +201,32 @@ foreach (['name' => "'wajub'", 'tab' => "'payments_gateways'", 'author' => "'Waj
     }
 }
 
+// The versions of PrestaShop the module runs on: up to every 9.x, written
+// out, as Addons asks. _PS_VERSION_ would say any version to come.
+if (preg_match('/->ps_versions_compliancy = \[([^\]]*)\];/', $module, $match) !== 1) {
+    $problems[] = 'wajub.php: no ps_versions_compliancy';
+} elseif (str_contains($match[1], '_PS_VERSION_') || preg_match("/'max' => '9\\.99\\.99'/", $match[1]) !== 1) {
+    $problems[] = "wajub.php: ps_versions_compliancy's max is not '9.99.99' (never _PS_VERSION_)";
+}
+
+// No PHP file of the module answers a request for its own address: the
+// shop's index.php runs its pages. Apache 2.4 (mod_authz_core) and 2.2.
+$htaccess = is_file($root . '/.htaccess') ? (string) file_get_contents($root . '/.htaccess') : '';
+$rules = preg_replace('/^\s*#[^\n]*$/m', '', $htaccess) ?? $htaccess;
+$refuses = static function (string $condition, string $refusal) use ($rules): bool {
+    return preg_match('/<IfModule\s+' . preg_quote($condition, '/') . '>\s*<Files\s+"?\*\.php"?>[^<]*' . $refusal . '[^<]*<\/Files>\s*<\/IfModule>/i', $rules) === 1;
+};
+if ($htaccess === '') {
+    $problems[] = '.htaccess: missing at the root (it refuses a request for the module\'s PHP files)';
+} else {
+    if (!$refuses('mod_authz_core.c', 'Require\s+all\s+denied')) {
+        $problems[] = '.htaccess: does not refuse *.php on Apache 2.4 (<IfModule mod_authz_core.c>, Require all denied)';
+    }
+    if (!$refuses('!mod_authz_core.c', 'Order\s+allow,deny\s+Deny\s+from\s+all')) {
+        $problems[] = '.htaccess: does not refuse *.php on Apache 2.2 (<IfModule !mod_authz_core.c>, Order allow,deny, Deny from all)';
+    }
+}
+
 // Each e-mail the module sends, in every language it ships, as HTML and text.
 foreach (glob($root . '/mails/en/*.html') ?: [] as $template) {
     $name = basename($template, '.html');
@@ -182,6 +235,17 @@ foreach (glob($root . '/mails/en/*.html') ?: [] as $template) {
             if (!is_file($root . '/mails/' . $language . '/' . $name . '.' . $format)) {
                 $problems[] = 'mails/' . $language . '/' . $name . '.' . $format . ': missing';
             }
+        }
+    }
+}
+
+// A zip's composer.json says how the module's classes load, not how its
+// developers work (bin/build-zip.sh trims it).
+if (!is_dir($root . '/bin') && is_file($root . '/composer.json')) {
+    $composer = json_decode((string) file_get_contents($root . '/composer.json'), true);
+    foreach (['require-dev', 'scripts'] as $part) {
+        if (!is_array($composer) || array_key_exists($part, $composer)) {
+            $problems[] = 'composer.json: ' . (is_array($composer) ? $part . ' ships' : 'not JSON');
         }
     }
 }

@@ -28,6 +28,7 @@ require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/fakes/payments.php';
 
 use Wajub\PrestaShop\Api\Client;
+use Wajub\PrestaShop\Checkout\KeptNotices;
 use Wajub\PrestaShop\Checkout\Offer;
 use Wajub\PrestaShop\Checkout\PreparedPayments;
 use Wajub\PrestaShop\Checkout\PrepareEndpoint;
@@ -522,11 +523,40 @@ check(PreparedPayments::callback('http://shop.cm/return', false) === '', 'never 
 
 check(CheckoutLocale::of('fr-FR') === 'fr' && CheckoutLocale::of('de') === '' && CheckoutLocale::hostedPageUrl('https://pay.wajub.com/x?a=1', 'en') === 'https://pay.wajub.com/x?a=1&locale=en', 'the checkout\'s language, when Wajub has it');
 
-$strip = LogoStrip::dataUri(['mtn', 'orange', 'airtel'], dirname(__DIR__) . '/views/img/methods');
-$svg = base64_decode(substr($strip, strlen('data:image/svg+xml;base64,')));
-check(str_starts_with($strip, 'data:image/svg+xml;base64,') && str_contains($svg, '<title>MTN Mobile Money, Orange Money, Airtel Money</title>'), 'the logos as one picture, named');
-check(substr_count($svg, '<image ') === 3 && substr_count($svg, '<rect ') === 1 && str_contains($svg, 'height="24"'), 'each 24px high, Airtel on its white badge');
-check(LogoStrip::dataUri([], dirname(__DIR__) . '/views/img/methods') === '' && LogoStrip::dataUri(['nope'], dirname(__DIR__) . '/views/img/methods') === '', 'no logo: no picture');
+// The logos as one picture: an SVG file, each logo's drawing inside it
+// (an SVG an <img> shows loads nothing else), written once.
+$methodsDir = dirname(__DIR__) . '/views/img/methods';
+$svg = LogoStrip::svg(['mtn', 'orange', 'airtel'], $methodsDir);
+check(str_starts_with($svg, '<svg xmlns="http://www.w3.org/2000/svg" width="82" height="24" viewBox="0 0 82 24"><title>MTN Mobile Money, Orange Money, Airtel Money</title>'), 'the logos as one picture, as wide as they are, named: ' . substr($svg, 0, 160));
+check(str_contains($svg, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 72 72" x="0" y="0" width="24" height="24"><image ') && str_contains($svg, 'viewBox="0.07 0.07 53.93 53.93" x="28" y="0" width="24" height="24">'), 'each 24px high, 4px apart, its own drawing in a nested picture');
+check(str_contains($svg, '<rect x="56" y="0" width="26" height="24" rx="3" fill="#fff"/>') && str_contains($svg, 'x="60" y="3" width="18" height="18"'), 'Airtel on its white badge');
+check(substr_count($svg, '<svg ') === 4 && !str_contains($svg, 'data:image/svg+xml') && !str_contains($svg, 'href="http') && !str_contains($svg, 'href="/'), 'nothing it would have to load: no address, no picture of a picture');
+foreach (array_merge(...array_map([Methods::class, 'logoChoices'], Methods::KINDS)) as $key) {
+    check(str_ends_with(Methods::logoFile($key), '.svg') && LogoStrip::svg([$key], $methodsDir) !== '', 'every logo is an SVG the picture can hold: ' . $key);
+}
+check(LogoStrip::svg([], $methodsDir) === '' && LogoStrip::svg(['nope'], $methodsDir) === '', 'no logo: no picture');
+
+$into = sys_get_temp_dir() . '/wajub-strip-' . getmypid();
+@mkdir($into);
+$file = LogoStrip::file(['mtn', 'orange'], $methodsDir, $into);
+check(preg_match('#/wajub-logos-[0-9a-f]{20}\.svg$#', $file) === 1 && is_file($file) && (string) file_get_contents($file) === LogoStrip::svg(['mtn', 'orange'], $methodsDir), 'written once in the folder of the shop\'s generated pictures, named by its content: ' . $file);
+check(basename($file) === LogoStrip::PREFIX . substr(hash('sha256', LogoStrip::svg(['mtn', 'orange'], $methodsDir)), 0, 20) . '.svg', 'named by its content: the next page, and every shop of the server, finds it there');
+check(LogoStrip::file(['mtn', 'orange'], $methodsDir, $into) === $file && count(glob($into . '/*')) === 1, 'the same logos: the same file, nothing written again, nothing left half written');
+check(LogoStrip::file(['orange', 'mtn'], $methodsDir, $into) !== $file && count(glob($into . '/wajub-logos-*.svg')) === 2, 'other logos, or another order: another file');
+check(LogoStrip::file(['mtn'], $methodsDir, $into . '/missing') === '' && LogoStrip::file([], $methodsDir, $into) === '', 'a folder that takes no file, or no logo: no file (the shop shows the first logo\'s own file)');
+LogoStrip::forget($into);
+check(glob($into . '/*') === [], 'uninstalling deletes them');
+@rmdir($into);
+
+// What a script's answer says, for the page it takes the payer to.
+$kept = new KeptNotices($GLOBALS['store'] = new MemoryStateStore());
+$id = $kept->keep(['error' => ['Your cart is back.', '', ['not text']], 'info' => [], 'nonsense' => ['x']], 'https://boutique.cm/order');
+check(preg_match('/^[a-f0-9]{32}$/', $id) === 1 && $GLOBALS['store']->ttl('notice:' . $id) === KeptNotices::TTL, 'kept under an id nobody guesses, ten minutes: ' . $id);
+check($kept->take($id) === ['to' => 'https://boutique.cm/order', 'messages' => ['error' => ['Your cart is back.']]], 'read with where the payer goes on to, text only, by PrestaShop\'s kinds');
+check($kept->take($id) === null, 'read once');
+check($kept->keep(['error' => []], 'https://boutique.cm/order') === '' && $kept->keep(['error' => ['x']], '') === '', 'nothing to say, or nowhere to go: nothing kept');
+check($kept->take('../notice') === null && $kept->take('') === null && $kept->take(str_repeat('a', 32)) === null, 'an id that is none, or unknown: nothing');
+
 check(Methods::channelLogos(['paypal', 'apple_pay', 'cm.mtn', 'paypal']) === ['paypal', 'applepay'], 'the logos of an account\'s other channels, once each');
 
 done('checkout');

@@ -66,8 +66,10 @@ final class OrderPanel
      */
     public function view(int $idOrder): ?array
     {
+        // One of the orders a cart that ships in several packages became:
+        // the group's payments, refunds and notes, under its first order.
         $order = $this->services->orders()->find($idOrder);
-        $records = $this->services->payments()->forOrder($idOrder);
+        $records = $order !== null ? $this->services->payments()->forOrder($order->id) : [];
         if ($order === null || ($records === [] && !$order->isWajub())) {
             return null;
         }
@@ -76,7 +78,7 @@ final class OrderPanel
         $money = $this->services->money();
         $ledger = $this->services->ledger();
         $environment = $this->services->environment()->isLive() ? 'live' : 'sandbox';
-        $refunds = $this->services->refunds()->forOrder($idOrder);
+        $refunds = $this->services->refunds()->forOrder($order->id);
         $current = $records === [] ? null : $records[count($records) - 1];
         $payments = [];
         foreach (array_reverse($records) as $record) {
@@ -116,6 +118,12 @@ final class OrderPanel
 
         return [
             'order_id' => $order->id,
+            // One of the orders a cart that ships in several packages
+            // became: PrestaShop shows each order's own total beside the
+            // panel, whose amounts are those of them all.
+            'group' => count($order->ids) > 1
+                ? $t->trans('Orders %orders% (reference %reference%) are one cart shipped in several packages: the payments, amounts and notes here are those of them all.', ['%orders%' => implode(', ', $order->ids), '%reference%' => $order->reference], 'Modules.Wajub.Admin')
+                : '',
             'payments' => $payments,
             'refunds' => array_map(static function (RefundRecord $refund) use ($t, $money): array {
                 return [
@@ -167,6 +175,7 @@ final class OrderPanel
     public function refresh(int $idOrder): array
     {
         $none = ['changed' => false, 'message' => ''];
+        $idOrder = $this->services->orders()->leadId($idOrder);
         if (!$this->services->state()->add('refreshed:' . $idOrder, 1, self::REFRESH_EVERY)) {
             return $none;
         }
@@ -212,7 +221,7 @@ final class OrderPanel
     {
         $t = $this->services->translator();
         $lock = $this->services->lock();
-        $name = 'order:' . $idOrder;
+        $name = 'order:' . $this->services->orders()->leadId($idOrder);
         if (!$lock->acquire($name, self::LOCK_WAIT)) {
             return self::answer(false, $t->trans('The order is being updated. Try again in a moment.', [], 'Modules.Wajub.Admin'), 'warning', false);
         }

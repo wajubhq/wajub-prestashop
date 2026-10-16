@@ -13,7 +13,8 @@
  * Hummingbird draw it (the form mounted when its option is selected,
  * "Place order" taken over, the order placed, the form submitted, the payer
  * sent on, or the order given back as a cart), then order-status.js on the
- * order confirmation page. Against tests/fakes/fields-dom.js.
+ * order confirmation page, and recount.js, which asks the shop to read a
+ * payment again. Against tests/fakes/fields-dom.js.
  *
  *     node tests/run-fields-js-tests.js
  */
@@ -838,12 +839,57 @@ async function orderStatusTests() {
   check(page.panel.classList.contains("wajub-order-status--partial") && page.panel.querySelector("[data-wajub-lead]").textContent === "4 000 FCFA already received; 6 000 FCFA left to pay.", "part of the order paid: what was received and what is left");
 }
 
+// --- recount.js: a page that asks the shop to read a payment again -----------------------------
+
+function recountPage(config, ready, beacon) {
+  const sent = [];
+  const listeners = {};
+  const ctx = {
+    document: { readyState: ready },
+    navigator: beacon === undefined ? { sendBeacon: (url, body) => sent.push(["beacon", url, body]) && true } : beacon,
+    fetch: (url, options) => {
+      sent.push(["fetch", url, options && options.method, options && options.keepalive]);
+      return Promise.resolve({ ok: true });
+    },
+    addEventListener: (type, fn) => {
+      listeners[type] = fn;
+    },
+  };
+  if (config !== null) {
+    ctx.wajubRecount = config;
+  }
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(source("recount.js"), ctx);
+  return { sent, listeners };
+}
+
+async function recountTests() {
+  const url = "https://shop.test/module/wajub/recount";
+  let page = recountPage({ url }, "loading");
+  check(page.sent.length === 0 && typeof page.listeners.load === "function", "recount: nothing while the page loads: it waits for the page to be on screen");
+  page.listeners.load();
+  check(page.sent.length === 1 && page.sent[0][0] === "beacon" && page.sent[0][1] === url, "recount: once loaded, one beacon to the shop's recount address");
+  page = recountPage({ url }, "complete");
+  check(page.sent.length === 1 && page.sent[0][1] === url, "recount: a page loaded already asks at once");
+  page = recountPage({ url }, "complete", { sendBeacon: () => false });
+  await flush();
+  check(page.sent.length === 1 && page.sent[0][0] === "fetch" && page.sent[0][2] === "POST" && page.sent[0][3] === true, "recount: a browser that will not send the beacon: a POST kept alive");
+  page = recountPage({ url }, "complete", {});
+  check(page.sent.length === 1 && page.sent[0][0] === "fetch", "recount: a browser without beacons: the same POST");
+  page = recountPage(null, "complete");
+  check(page.sent.length === 0, "recount: nothing without the shop's address");
+  page = recountPage({ url: "" }, "complete");
+  check(page.sent.length === 0, "recount: nor with an empty one");
+}
+
 (async () => {
   lookTests();
   await coreTests();
   await checkoutTests();
   await optionsTests();
   await orderStatusTests();
+  await recountTests();
   process.stdout.write("fields-js: " + (run - failed) + " passed, " + failed + " failed\n");
   process.exit(failed === 0 ? 0 : 1);
 })().catch((e) => {

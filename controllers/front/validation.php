@@ -16,6 +16,7 @@ use Wajub\PrestaShop\Checkout\CheckoutStrings;
 use Wajub\PrestaShop\Checkout\PrestaShopCarts;
 use Wajub\PrestaShop\Checkout\Release;
 use Wajub\PrestaShop\Controller\FrontAnswers;
+use Wajub\PrestaShop\Order\OrderView;
 use Wajub\PrestaShop\Payment\Methods;
 use Wajub\PrestaShop\Payment\PaymentRecord;
 use Wajub\PrestaShop\Services;
@@ -44,11 +45,12 @@ use Wajub\PrestaShop\Support\CustomerMessage;
  * another method (a checkout left open in another tab) starts no payment
  * beside the order's own: that one is settled first (Checkout\Starter).
  *
- * The cart's lock is held until the order's is taken, by when the order
- * exists: should the database hold one named lock only per connection
- * (MySQL before 5.7, which drops the first as the second is taken), a
- * second request of the cart finds the order placed, and waits for the
- * order's lock instead.
+ * The cart's lock is held while the order is placed, and let go before the
+ * order's lock is taken: a request never holds two named locks at once,
+ * which MySQL 5.6 does not allow (a GET_LOCK of another name drops the one
+ * held: Support\DbLock). A second request of the cart then finds the order
+ * placed, and waits for the order's lock, under which its payment is
+ * started, or found started already, once.
  *
  * PrestaShop e-mails the customer the order's confirmation as it is placed:
  * held until the order is paid (Order\HeldConfirmations), so a payment
@@ -72,13 +74,15 @@ class WajubValidationModuleFrontController extends ModuleFrontController
      */
     public function postProcess()
     {
+        // The script's payer, on the way to the page its messages are for.
+        $this->showKeptNotices();
         $this->fromScript = (string) Tools::getValue('ajax') === '1';
         if (!$this->isPost()) {
             Tools::redirect($this->context->link->getPageLink('order'));
         }
 
         $services = $this->module->services();
-        $kind = $this->text('kind', 32);
+        $kind = $this->line((string) Tools::getValue('kind', ''), 32);
         if (!Methods::isKind($kind) || !$this->module->active || !$services->settings()->methodEnabled($kind)) {
             $this->fail('unavailable', CheckoutStrings::fields('', $services->translator())['unavailable']);
         }
@@ -98,27 +102,32 @@ class WajubValidationModuleFrontController extends ModuleFrontController
             $this->fail('busy', $services->translator()->trans('Your order is being placed. Please wait a moment.', [], 'Modules.Wajub.Shop'));
         }
         try {
-            $answer = $this->place($services, $cart, $customer, $kind);
+            $placed = $this->place($services, $cart, $customer, $kind);
         } finally {
+            // The order exists by now, or none will: never two locks at once.
             $lock->release($name);
         }
 
-        $this->finish($services, $answer);
+        $this->finish($services, isset($placed['order']) ? $this->pay($services, $placed['order'], $placed['cart'], $kind, $placed['slot']) : $placed['answer']);
     }
 
     /**
-     * The order of the cart, placed now or before, and its payment.
+     * The order of the cart, placed now or before, under the cart's lock,
+     * with what pays it: the payment form's payment (`slot`) or none (Wajub's
+     * page). `answer` instead when no order can be paid this way.
      *
-     * @return array{ok: bool, data: array<string, mixed>, order?: int}
+     * @return array{answer: array{ok: bool, data: array<string, mixed>}}|array{order: OrderView, cart: CartView, slot: PaymentRecord|null}
      */
     private function place(Services $services, Cart $cart, Customer $customer, string $kind): array
     {
-        $posted = $this->text('wajub_prepared', 80);
+        $posted = $this->line((string) Tools::getValue('wajub_prepared', ''), 80);
         $fields = Methods::isFields($kind) && $posted !== '';
         $idOrder = (int) Order::getIdByCartId((int) $cart->id);
+        // A cart placed in several orders (one per package) goes by the first.
+        $idOrder = $idOrder > 0 ? $services->orders()->leadId($idOrder) : 0;
         $view = PrestaShopCarts::view($cart);
         if (!$view instanceof CartView || !$view->payable()) {
-            return ['ok' => false, 'data' => ['code' => 'cart', 'message' => CheckoutStrings::refreshed($services->translator())]];
+            return ['answer' => ['ok' => false, 'data' => ['code' => 'cart', 'message' => CheckoutStrings::refreshed($services->translator())]]];
         }
 
         $slot = null;
@@ -127,14 +136,14 @@ class WajubValidationModuleFrontController extends ModuleFrontController
                 // Before the order exists: a stale or refused payment places none.
                 $preflight = $services->starter()->preflight($view, $kind, $posted);
                 if (!isset($preflight['slot'])) {
-                    return $preflight;
+                    return ['answer' => $preflight];
                 }
                 $slot = $preflight['slot'];
             } else {
                 // Placed already (a double click, a lost answer): its own payment.
                 $slot = $services->payments()->find($posted);
                 if ($slot === null || $slot->idCart !== (int) $cart->id || ($slot->idOrder !== 0 && $slot->idOrder !== $idOrder) || $slot->mode !== PaymentRecord::MODE_FIELDS) {
-                    return ['ok' => false, 'data' => ['code' => 'refreshed', 'message' => CheckoutStrings::refreshed($services->translator()), 'redirect' => $this->context->link->getPageLink('order')]];
+                    return ['answer' => ['ok' => false, 'data' => ['code' => 'refreshed', 'message' => CheckoutStrings::refreshed($services->translator()), 'redirect' => $this->context->link->getPageLink('order')]]];
                 }
             }
         }
@@ -143,13 +152,13 @@ class WajubValidationModuleFrontController extends ModuleFrontController
             // As PrestaShop's own "Place order" checks it: a product sold
             // out, or no longer sold, meanwhile.
             if ($cart->isAllProductsInStock() !== true || $cart->checkAllProductsAreStillAvailableInThisState() !== true || $cart->checkAllProductsHaveMinimalQuantities() !== true) {
-                return ['ok' => false, 'data' => ['code' => 'cart', 'message' => '', 'redirect' => $this->context->link->getPageLink('cart', null, null, ['action' => 'show'])]];
+                return ['answer' => ['ok' => false, 'data' => ['code' => 'cart', 'message' => '', 'redirect' => $this->context->link->getPageLink('cart', null, null, ['action' => 'show'])]]];
             }
             // Other payment methods with nothing left beyond Mobile Money and
             // Card (the account changed since the page was drawn): said
             // before an order is placed, only to be cancelled.
             if (!Methods::isFields($kind) && $services->offer()->typesLeft($view->currency, $view->total, $view->country) === []) {
-                return ['ok' => false, 'data' => ['code' => 'method_unavailable', 'message' => CheckoutStrings::fields($kind, $services->translator())['unavailable']]];
+                return ['answer' => ['ok' => false, 'data' => ['code' => 'method_unavailable', 'message' => CheckoutStrings::fields($kind, $services->translator())['unavailable']]]];
             }
             $title = $services->checkoutOptions()->title($kind, (int) $this->context->language->id);
             $this->module->placingOrder = true;
@@ -175,11 +184,21 @@ class WajubValidationModuleFrontController extends ModuleFrontController
         // back as a cart, or holding another payment by then.
         $order = $services->orders()->find($idOrder);
         if ($order === null) {
-            return ['ok' => false, 'data' => ['code' => 'start_failed', 'message' => CheckoutStrings::fields($kind, $services->translator())['startFailed']]];
+            return ['answer' => ['ok' => false, 'data' => ['code' => 'start_failed', 'message' => CheckoutStrings::fields($kind, $services->translator())['startFailed']]]];
         }
-        $placed = PrestaShopCarts::view(new Cart($order->idCart)) ?? $view;
-        $language = CheckoutLocale::of((string) $this->context->language->iso_code);
 
+        return ['order' => $order, 'cart' => PrestaShopCarts::view(new Cart($order->idCart)) ?? $view, 'slot' => $slot];
+    }
+
+    /**
+     * The order's payment, under the order's lock (taken once the cart's is
+     * let go): the form's payment activated, or a payment on Wajub's page.
+     *
+     * @return array{ok: bool, data: array<string, mixed>, order?: int}
+     */
+    private function pay(Services $services, OrderView $order, CartView $placed, string $kind, ?PaymentRecord $slot): array
+    {
+        $language = CheckoutLocale::of((string) $this->context->language->iso_code);
         $orderLock = 'order:' . $order->id;
         $lock = $services->lock();
         if (!$lock->acquire($orderLock, self::LOCK_WAIT)) {
@@ -242,7 +261,7 @@ class WajubValidationModuleFrontController extends ModuleFrontController
         if ($this->fromScript) {
             if ($redirect !== '' && $message !== '') {
                 // Read on the page the script takes the payer to.
-                $this->keepNotifications();
+                $redirect = $this->throughNotices('validation', $redirect);
             }
             $this->answerJson(200, ['success' => false, 'data' => ['code' => $code, 'message' => $message, 'redirect' => $redirect]]);
         }
@@ -259,7 +278,7 @@ class WajubValidationModuleFrontController extends ModuleFrontController
     private function cart(Services $services): Cart
     {
         $posted = (int) Tools::getValue('cart');
-        $token = $this->text('token', 64);
+        $token = $this->line((string) Tools::getValue('token', ''), 64);
         $cart = $this->context->cart;
         if (!$cart instanceof Cart || !Validate::isLoadedObject($cart) || (int) $cart->id !== $posted) {
             $cart = new Cart($posted);

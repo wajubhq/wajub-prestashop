@@ -41,6 +41,8 @@ class WajubReleaseModuleFrontController extends ModuleFrontController
      */
     public function postProcess()
     {
+        // The script's payer, on the way to the page its messages are for.
+        $this->showKeptNotices();
         $json = (string) Tools::getValue('ajax') === '1';
         $idOrder = (int) Tools::getValue('id_order');
         $order = $idOrder > 0 ? new Order($idOrder) : null;
@@ -49,14 +51,14 @@ class WajubReleaseModuleFrontController extends ModuleFrontController
         }
 
         $services = $this->module->servicesFor((int) $order->id_shop);
-        if (!Tokens::matches($services->tokens()->order((int) $order->id, (string) $order->secure_key), $this->text('token', 64))) {
+        if (!Tokens::matches($services->tokens()->order((int) $order->id, (string) $order->secure_key), $this->line((string) Tools::getValue('token', ''), 64))) {
             $this->leaveWith($json, ['to' => Release::TO_CHECKOUT, 'url' => $this->context->link->getPageLink('order'), 'message' => '', 'tone' => 'info']);
         }
-        $reason = $this->text('reason', 16);
+        $reason = $this->line((string) Tools::getValue('reason', ''), 16);
         $reason = in_array($reason, self::REASONS, true) ? $reason : 'switch';
 
         $lock = $services->lock();
-        $name = 'order:' . (int) $order->id;
+        $name = 'order:' . $services->orders()->leadId((int) $order->id);
         $busy = $services->translator()->trans('We could not check your payment with Wajub. Please try again in a moment.', [], 'Modules.Wajub.Shop');
         if (!$lock->acquire($name, self::LOCK_WAIT)) {
             $this->leaveWith($json, ['to' => Release::STAY, 'url' => '', 'message' => $busy, 'tone' => 'error']);
@@ -95,8 +97,9 @@ class WajubReleaseModuleFrontController extends ModuleFrontController
             }
         }
         if ($json) {
-            if ($left['to'] !== Release::STAY && $left['message'] !== '') {
-                $this->keepNotifications();
+            if ($left['to'] !== Release::STAY && $left['message'] !== '' && $left['url'] !== '') {
+                // Read on the page the script takes the payer to.
+                $left['url'] = $this->throughNotices('release', $left['url']);
             }
             $this->answerJson(200, ['success' => true, 'data' => $left]);
         }

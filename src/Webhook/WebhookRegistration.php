@@ -45,6 +45,18 @@ final class WebhookRegistration
      * What the module acts on: payments, refunds and disputes. Named one by
      * one rather than `*`, so the shop is not sent transfer, balance and
      * customer events it has nothing to do with.
+     *
+     * The plugin's, and the events that carry what the module's handlers
+     * keep besides: a payment paid in instalments is `partial` between two
+     * of them, which no `payment.partial` says (Wajub has no such event:
+     * payments/lifecycle), but each instalment's `payment.split.*` does,
+     * with the whole payment; and a live refund under way sends
+     * `refund.processing`, which a refund asked again reads
+     * (Refund\RefundSync). Wajub accepts any name and sends nothing for one
+     * it does not have: only names of its catalogue
+     * (developer-tools/webhooks/events). A shop registered before has its
+     * endpoint given those it lacks (WebhookRegistration::adopt(), and
+     * upgrade/upgrade-1.0.1.php).
      */
     public const EVENTS = [
         'payment.succeeded',
@@ -52,7 +64,11 @@ final class WebhookRegistration
         'payment.expired',
         'payment.cancelled',
         'payment.processing',
+        'payment.split.processing',
+        'payment.split.succeeded',
+        'payment.split.failed',
         'refund.created',
+        'refund.processing',
         'refund.succeeded',
         'refund.failed',
         'refund.cancelled',
@@ -154,6 +170,59 @@ final class WebhookRegistration
     }
 
     /**
+     * Gives the endpoint this scope registered itself, in each environment
+     * with a key, the events of EVENTS it lacks: a version of the module
+     * that listens to more events updates the shops registered before it
+     * (upgrade/upgrade-1.0.1.php). Nothing else: never an endpoint created,
+     * never a new secret, nothing for an endpoint Wajub no longer has with
+     * the shop's address (the Webhooks tab says to register it again).
+     * By environment: 'updated', 'current' (it had them all, or `*`),
+     * 'none' (no endpoint of its own here) or 'error' (Wajub did not answer:
+     * "Configure automatically" does the same later).
+     *
+     * @return array<string, string>
+     */
+    public function addMissingEvents(): array
+    {
+        $results = [];
+        foreach (Settings::ENVIRONMENTS as $environment) {
+            $saved = $this->settings->webhookEndpointSavedHere($environment);
+            $key = $this->settings->secretKey($environment);
+            if ($saved === null || $saved['id'] === '' || $key === '') {
+                $results[$environment] = 'none';
+                continue;
+            }
+            try {
+                $client = ($this->clientFor)($key, $environment === Settings::SANDBOX);
+                $endpoint = null;
+                foreach ($client->listWebhookEndpoints($saved['url']) as $found) {
+                    if ((string) ($found['id'] ?? '') === $saved['id']) {
+                        $endpoint = $found;
+                        break;
+                    }
+                }
+                if ($endpoint === null) {
+                    $results[$environment] = 'none';
+                    continue;
+                }
+                $events = is_array($endpoint['events'] ?? null) ? array_map('strval', $endpoint['events']) : [];
+                $missing = in_array('*', $events, true) || $events === [] ? [] : array_diff(self::EVENTS, $events);
+                if ($missing === []) {
+                    $results[$environment] = 'current';
+                    continue;
+                }
+                $client->updateWebhookEndpoint($saved['id'], ['events' => array_values(array_unique(array_merge($events, $missing)))]);
+                $results[$environment] = 'updated';
+            } catch (\Throwable $e) {
+                $this->logger->error('The webhook could not be given the events it lacks', ['environment' => $environment, 'error' => $e->getMessage()]);
+                $results[$environment] = 'error';
+            }
+        }
+
+        return $results;
+    }
+
+    /**
      * Why Wajub cannot reach `url`, before asking it: a local or private host
      * ('private_url'), or http in Live ('https_required'). '' when it may.
      */
@@ -181,6 +250,19 @@ final class WebhookRegistration
         }
 
         return '';
+    }
+
+    /**
+     * The Wajub CLI's command that forwards the account's Sandbox events to
+     * `url`, for a shop Wajub cannot reach (a local address): the address
+     * quoted when a shell would read it otherwise (`?`, `&` in the address
+     * of a shop without friendly URLs).
+     */
+    public static function listenCommand(string $url): string
+    {
+        $quoted = preg_match('#^[A-Za-z0-9._~:/%+=-]+$#', $url) === 1 ? $url : "'" . str_replace("'", '%27', $url) . "'";
+
+        return 'wajub listen --forward-to ' . $quoted;
     }
 
     /**
@@ -336,7 +418,13 @@ final class WebhookRegistration
     {
         switch ($reason) {
             case 'private_url':
-                return $this->t->trans('Wajub cannot reach %host%: it is a local or private address. Automatic setup works once the shop is online. To test from this computer, expose it with a tunnel (such as the Wajub CLI’s “wajub listen”) and add the webhook by hand.', ['%host%' => (string) parse_url($url, PHP_URL_HOST)], 'Modules.Wajub.Admin');
+                // `wajub listen` is no tunnel: it reads the account's events
+                // from Wajub and posts them to the address it is given, signed
+                // with a secret of its own. No endpoint is added in the
+                // Dashboard, which would refuse a local address anyway.
+                return $environment === Settings::LIVE
+                    ? $this->t->trans('Wajub cannot reach %host%: it is a local or private address. Live webhooks work once the shop is online, at an https:// address.', ['%host%' => (string) parse_url($url, PHP_URL_HOST)], 'Modules.Wajub.Admin')
+                    : $this->t->trans('Wajub cannot reach %host%: it is a local or private address. Automatic setup works once the shop is online. Meanwhile, to receive Sandbox events on this computer, run “%command%” with the Wajub CLI, and paste the secret that “wajub listen --print-secret” shows into Sandbox signing secret, under Set the webhook up by hand: no endpoint is added in the Wajub Dashboard.', ['%host%' => (string) parse_url($url, PHP_URL_HOST), '%command%' => self::listenCommand($url)], 'Modules.Wajub.Admin');
             case 'https_required':
                 return $environment === Settings::LIVE
                     ? $this->t->trans('Live webhooks need an https:// address. Turn on SSL for this shop, then try again.', [], 'Modules.Wajub.Admin')

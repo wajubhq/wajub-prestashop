@@ -110,10 +110,13 @@ final class Settlement
     /** @var string why the last refunds read that left a payment uncounted failed: 'unanswered' or 'refused' */
     private $refundsFailure = 'unanswered';
 
+    /** @var RecountHint|null when the pages ask for the payments that could not count to be read again (Order\Recounts) */
+    private $recountHint;
+
     /**
      * @param callable(string): Client $clientFor the shop's client of an environment ('sandbox' or 'live'), with that environment's key only
      */
-    public function __construct(ShopOrders $orders, PaymentStore $payments, RefundStore $refunds, Ledger $ledger, callable $clientFor, StateStore $state, Translator $t, MoneyFormatter $money, Logger $logger, int $partialState)
+    public function __construct(ShopOrders $orders, PaymentStore $payments, RefundStore $refunds, Ledger $ledger, callable $clientFor, StateStore $state, Translator $t, MoneyFormatter $money, Logger $logger, int $partialState, ?RecountHint $recountHint = null)
     {
         $this->orders = $orders;
         $this->payments = $payments;
@@ -125,6 +128,7 @@ final class Settlement
         $this->money = $money;
         $this->logger = $logger;
         $this->partialState = $partialState;
+        $this->recountHint = $recountHint;
     }
 
     /**
@@ -229,11 +233,14 @@ final class Settlement
                 return $outcome;
             }
             if (self::isAbandoned($status)) {
-                $this->orders->note($order, 'abandoned_' . md5($record->paymentId . '|' . ($status === 'canceled' ? 'cancelled' : $status)), $this->t->trans(
-                    'The customer did not complete Wajub payment %payment% (Wajub status: %status%).',
-                    ['%payment%' => $record->paymentId, '%status%' => $status],
-                    'Modules.Wajub.Admin'
-                ));
+                $parameters = ['%payment%' => $record->paymentId, '%status%' => $status];
+                // Cancelled by the shop itself, nobody having paid it (the
+                // order given back as a cart, or left unpaid past the
+                // delay): its webhook confirms it, the customer did nothing.
+                $byShop = in_array($status, ['canceled', 'cancelled'], true) && ($record->metadata[PaymentRecord::CANCELLED_BY_SHOP] ?? '') !== '';
+                $this->orders->note($order, 'abandoned_' . md5($record->paymentId . '|' . ($status === 'canceled' ? 'cancelled' : $status)), $byShop
+                    ? $this->t->trans('Wajub payment %payment% was cancelled by the shop, before anyone paid it (Wajub status: %status%).', $parameters, 'Modules.Wajub.Admin')
+                    : $this->t->trans('The customer did not complete Wajub payment %payment% (Wajub status: %status%).', $parameters, 'Modules.Wajub.Admin'));
 
                 return $outcome;
             }
@@ -543,11 +550,19 @@ final class Settlement
         if ($readRefunds) {
             $read = $this->readRefunds($order, $record, (string) ($transaction['status'] ?? ''));
             if ($read === false) {
-                // Kept until it counts: read again later (Order\Cleanup),
-                // which tells the merchant should it still not count then.
-                if ($record->state !== PaymentRecord::UNCOUNTED) {
-                    $record->state = PaymentRecord::UNCOUNTED;
+                // Kept until it counts: read again a few minutes from now
+                // (Order\Recounts), and by the scheduled task (Order\Cleanup),
+                // which tell the merchant should it still not count then.
+                $changed = $record->state !== PaymentRecord::UNCOUNTED;
+                $record->state = PaymentRecord::UNCOUNTED;
+                $due = $this->recountHint !== null ? Recounts::schedule($record, time()) : 0;
+                if ($changed || $due > 0) {
                     $this->payments->save($record);
+                }
+                // Saved first: a run of the pages' reads that sets the hint
+                // meanwhile finds the payment (Recounts::refresh()).
+                if ($due > 0 && $this->recountHint !== null) {
+                    $this->recountHint->lower($due);
                 }
 
                 return null;
@@ -568,6 +583,10 @@ final class Settlement
         $record->idOrderPayment = $this->orders->addPayment($order, $collected, $record->paymentId);
         $record->counted = $collected;
         $record->state = PaymentRecord::FINAL;
+        // When Wajub made it: a refund takes back from the payment made
+        // last first, whatever order the shop recorded them in (Ledger).
+        $madeAt = PaymentRecord::timeOf($transaction['created_at'] ?? null);
+        $record->setMeta(PaymentRecord::MADE_AT, $madeAt > 0 ? (string) $madeAt : '');
         $this->payments->save($record);
         $this->logger->info('Payment counted toward the order', ['order' => $order->id, 'payment' => $record->paymentId, 'amount' => $collected]);
 
@@ -723,8 +742,11 @@ final class Settlement
             '%due%' => $this->money->format($this->ledger->due($order, $environment), $order->currency),
             '%total%' => $this->money->format(Ledger::total($order), $order->currency),
         ];
-        // For an order that can still be paid, how the customer pays the rest.
-        $this->orders->note($order, self::leftToPayKey($record->paymentId), $order->stateId === $this->orders->canceledState()
+        // For an order the customer can still pay from its pages (a Wajub
+        // order neither cancelled nor paid once: Checkout\StatusAnswer::payable()),
+        // how they pay the rest; never a way the order's pages do not offer.
+        $payable = $order->isWajub() && !$order->paidOnce && $order->stateId !== $this->orders->canceledState();
+        $this->orders->note($order, self::leftToPayKey($record->paymentId), !$payable
             ? $this->t->trans('Wajub payment %payment% collected %collected%. Wajub holds %held% for this order: %due% of its total of %total% is left to pay.', $parameters, 'Modules.Wajub.Admin')
             : $this->t->trans('Wajub payment %payment% collected %collected%. Wajub holds %held% for this order: %due% of its total of %total% is left to pay. The customer pays it with "Pay the rest", on the order in their account or on its confirmation page.', $parameters, 'Modules.Wajub.Admin'));
     }

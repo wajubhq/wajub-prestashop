@@ -34,6 +34,7 @@ require_once __DIR__ . '/fakes/payments.php';
 require_once __DIR__ . '/fakes/money.php';
 
 use Wajub\PrestaShop\Order\Cleanup;
+use Wajub\PrestaShop\Order\Recounts;
 use Wajub\PrestaShop\Payment\PaymentRecord;
 use Wajub\PrestaShop\Services;
 use Wajub\PrestaShop\Settings\Settings;
@@ -48,7 +49,7 @@ use Wajub\PrestaShop\Webhook\PaymentEventHandler;
  */
 function run_cleanup(Services $s, ?int $now = null): array
 {
-    return (new Cleanup(static fn (int $idShop): Services => $s, $s->orders(), $s->payments(), $s->state(), $s->lock(), $GLOBALS['logger'], FakeShopOrders::AWAITING))->run($now);
+    return $s->cleanup(static fn (int $idShop): Services => $s)->run($now);
 }
 
 /**
@@ -89,6 +90,14 @@ forget_kept($s);
 $GLOBALS['orders']->orders[100]['placed'] = time() - 600;
 $done = run_cleanup($s);
 check($done['cancelled'] === [100], 'a delay of 5 minutes, the order placed 10 minutes ago: cancelled');
+check(noted(100, 'not completed within 5 minutes of the order being placed') === 1, 'the note says the delay: ' . notes_of(100));
+// One minute: a wording of its own, translated whole, never "1 minutes".
+$s->settings()->setCancelAfter(1);
+money_order(101, 'trx_minute');
+$GLOBALS['orders']->orders[101]['placed'] = time() - 120;
+$GLOBALS['api']->add('trx_minute', ['status' => 'pending', 'metadata' => ['order_id' => '101']]);
+$done = run_cleanup($s);
+check($done['cancelled'] === [101] && noted(101, 'This unpaid order was cancelled: its Wajub payment was not completed within 1 minute of the order being placed, and Wajub holds no money for it. Its products are back in stock.') === 1 && noted(101, '1 minutes') === 0, 'a delay of 1 minute: the note says "1 minute": ' . notes_of(101));
 $s->settings()->setCancelAfter(999999);
 check($s->settings()->cancelAfter() === Settings::CANCEL_AFTER_MAX, 'the delay is 30 days at most');
 
@@ -98,17 +107,38 @@ check($s->settings()->cancelAfter() === Settings::CANCEL_AFTER_MAX, 'the delay i
 $s = money_shop();
 money_order(613, 'trx_f8_pending');
 $GLOBALS['api']->add('trx_f8_pending', ['status' => 'pending', 'metadata' => ['order_id' => '613']]);
+// Its confirmation e-mail, held as it was placed (Order\HeldConfirmations).
+$s->heldConfirmations()->hold(['template' => 'order_conf', 'templateVars' => ['{id_order}' => 613, '{email}' => 'payer@example.cm'], 'to' => 'payer@example.cm']);
 $done = run_cleanup($s);
 check($done['cancelled'] === [613] && state_of(613) === FakeShopOrders::CANCELED && end($GLOBALS['orders']->history)['mail'] === false, 'F8: a payment with nothing taken: the order is cancelled, no e-mail');
 check(sent() === 'GET /payments/trx_f8_pending, DELETE /payments/trx_f8_pending' && $GLOBALS['api']->payments['trx_f8_pending']['status'] === 'cancelled', 'F8: its payment cancelled with Wajub first, so it can never be approved after: ' . sent());
 check(noted(613, 'This unpaid order was cancelled: its Wajub payment was not completed within 60 minutes of the order being placed, and Wajub holds no money for it. Its products are back in stock.') === 1, 'F8: the merchant reads why: ' . notes_of(613));
+check(!$s->heldConfirmations()->holds(613), 'F8: its confirmation e-mail, held until it is paid, is forgotten: never sent, the customer\'s name and addresses kept no longer');
+// The payment's webhook, which follows: the shop cancelled it, not the customer.
+deliver($s, 'payment.cancelled', ['id' => 'trx_f8_pending', 'status' => 'cancelled', 'amount' => 10000, 'amount_paid' => 0, 'currency' => 'XAF', 'sandbox' => false, 'metadata' => ['order_id' => '613']]);
+check(noted(613, 'Wajub payment trx_f8_pending was cancelled by the shop, before anyone paid it (Wajub status: cancelled).') === 1 && noted(613, 'The customer did not complete') === 0, 'F8: the webhook of the payment it cancelled: noted as cancelled by the shop, never as left by the customer: ' . notes_of(613));
+
+// A cart PrestaShop split into several orders (packages): each order's
+// confirmation is forgotten with the payment nobody paid, not the first's only.
+$s = money_shop();
+money_order(614, 'trx_f8_split', 6000.0);
+money_order(615, '', 4000.0);
+$GLOBALS['orders']->split(614, 615);
+$GLOBALS['api']->add('trx_f8_split', ['status' => 'pending', 'metadata' => ['order_id' => '614']]);
+foreach ([614, 615] as $id) {
+    $s->heldConfirmations()->hold(['template' => 'order_conf', 'templateVars' => ['{id_order}' => $id], 'to' => 'payer@example.cm']);
+}
+$done = run_cleanup($s);
+check(in_array(614, $done['cancelled'], true) && !$s->heldConfirmations()->holds(614) && !$s->heldConfirmations()->holds(615), 'F8: a cart split into two orders: both confirmation e-mails are forgotten with its payment: ' . json_encode($done));
 
 // Holding money counted: kept, with no API call.
 $s = money_shop();
 money_order(611, 'trx_f8a');
 counted(611, 'trx_f8a', 4000);
+$s->heldConfirmations()->hold(['template' => 'order_conf', 'templateVars' => ['{id_order}' => 611], 'to' => 'payer@example.cm']);
 $done = run_cleanup($s);
 check($done['kept'] === [611] && state_of(611) === FakeShopOrders::AWAITING && sent() === '', 'F8: an order holding money counted is kept, with no API call');
+check($s->heldConfirmations()->holds(611), 'F8: kept, its confirmation e-mail is kept too: it goes once the order is paid');
 
 // Holding money counted, the rest's payment open on Wajub's page: kept with
 // no call, its payment never cancelled under the payer.
@@ -149,6 +179,13 @@ foreach (['being approved' => ['processing', 0, false], 'refunded in full' => ['
     }
     $done = run_cleanup($s);
     check(($done['cancelled'] === [614]) === $cancels, "F8: a payment {$case}: " . ($cancels ? 'cancelled' : 'kept') . ' ' . json_encode($done));
+    if ($status === 'processing') {
+        $why = 'This unpaid order was not cancelled: Wajub payment trx_f8_processing may still go through (Wajub status: processing). The order is looked at again once Wajub tells how the payment ended.';
+        check(noted(614, $why) === 1, 'F8: kept for a payment being approved: the merchant reads why: ' . notes_of(614));
+        forget_kept($s);
+        run_cleanup($s);
+        check(noted(614, $why) === 1, 'F8: kept again by the next run: said once');
+    }
 }
 foreach (['refunded' => true, 'partially_refunded' => false] as $status => $cancels) {
     $s = money_shop();
@@ -381,13 +418,59 @@ check(count(run_cleanup($s)['cancelled']) === 3, 'the next run goes on with the 
 $s = money_shop();
 money_order(1100, 'trx_busy');
 $GLOBALS['api']->add('trx_busy', ['status' => 'pending', 'metadata' => ['order_id' => '1100']]);
-$GLOBALS['locks']->busy['cleanup'] = true;
+$GLOBALS['store']->add('cleanup_run', time(), 900);
 check(run_cleanup($s) === ['recounted' => 0, 'cancelled' => [], 'kept' => []] && sent() === '', 'another run under way: nothing done');
-unset($GLOBALS['locks']->busy['cleanup']);
+$GLOBALS['store']->delete('cleanup_run');
 $GLOBALS['locks']->busy['order:1100'] = true;
 check(run_cleanup($s)['cancelled'] === [] && state_of(1100) === FakeShopOrders::AWAITING, 'an order another request holds is left as it is');
 unset($GLOBALS['locks']->busy['order:1100']);
 check(run_cleanup($s)['cancelled'] === [1100], 'and looked at by the next run');
+check($GLOBALS['store']->get('cleanup_run') === null, 'each run lets go of its lease');
+// A run that outlasts its lease (Wajub slow on every order): the next run
+// took the lease meanwhile, and keeps it once the first one ends.
+$s = money_shop();
+money_order(1101, 'trx_slow');
+$GLOBALS['api']->add('trx_slow', ['status' => 'pending', 'metadata' => ['order_id' => '1101']]);
+$GLOBALS['api']->duringRequest = static function (string $route): void {
+    $GLOBALS['store']->delete('cleanup_run');
+    $GLOBALS['store']->add('cleanup_run', 'the-next-run', 900);
+};
+run_cleanup($s);
+$GLOBALS['api']->duringRequest = null;
+check($GLOBALS['store']->get('cleanup_run') === 'the-next-run', 'a run that outlasted its lease leaves the next run its own: ' . json_encode($GLOBALS['store']->get('cleanup_run')));
+$GLOBALS['store']->delete('cleanup_run');
+// MySQL 5.6 lets a request hold one named lock: the run is kept apart by a
+// lease in the module's state, never by a lock of its own, and takes each
+// order's lock in turn.
+$s = money_shop();
+money_order(1101, 'trx_one_a');
+$GLOBALS['api']->add('trx_one_a', ['status' => 'pending', 'metadata' => ['order_id' => '1101']]);
+money_order(1102, 'trx_one_b', 10000.0, ['state' => PaymentRecord::UNCOUNTED, 'status' => 'succeeded']);
+$GLOBALS['api']->add('trx_one_b', ['status' => 'succeeded', 'metadata' => ['order_id' => '1102']]);
+$done = run_cleanup($s);
+check($GLOBALS['locks']->mostHeld === 1 && !in_array('cleanup', $GLOBALS['locks']->taken, true) && in_array('order:1101', $GLOBALS['locks']->taken, true) && in_array('order:1102', $GLOBALS['locks']->taken, true), 'MySQL 5.6: one database lock at a time, each order\'s, none for the run: ' . json_encode($GLOBALS['locks']->taken));
+// The scheduled task reads a payment that could not count as the pages would
+// (Order\Recounts): still unread, its next read moves on, and the pages stop
+// asking until then.
+$s = money_shop();
+money_order(1104, 'trx_cron_recount');
+$GLOBALS['api']->add('trx_cron_recount', ['status' => 'succeeded', 'amount_paid' => 4000, 'metadata' => ['order_id' => '1104']]);
+$GLOBALS['api']->next['GET /payments/trx_cron_recount/refunds'] = array_fill(0, 6, [503, []]);
+deliver($s, 'payment.succeeded', payment_data('trx_cron_recount', 'succeeded', 10000.0, ['amount_paid' => 4000, 'metadata' => ['order_id' => '1104']]));
+$scheduled = (int) $GLOBALS['payments']->find('trx_cron_recount')->meta(Recounts::DUE);
+check($scheduled > 0 && $GLOBALS['recountHint']->at === $scheduled, 'recount: a payment that could not count is due again in a few minutes');
+$now = time() + 60;
+run_cleanup($s, $now);
+$record = $GLOBALS['payments']->find('trx_cron_recount');
+check((int) $record->meta(Recounts::DUE) === $scheduled && $record->meta(Recounts::TRIES) === '' && $GLOBALS['recountHint']->at === $scheduled, 'recount: read by the scheduled task before it is due, still unread: the pages still read it when it is due, none of their reads spent (the plugin\'s five minutes): ' . $record->meta(Recounts::DUE) . '/' . $record->meta(Recounts::TRIES));
+forget_kept($s);
+$now = $scheduled + 30;
+run_cleanup($s, $now);
+check((int) $GLOBALS['payments']->find('trx_cron_recount')->meta(Recounts::DUE) === $now + Recounts::RETRY_AFTER[0] && $GLOBALS['recountHint']->at === $now + Recounts::RETRY_AFTER[0], 'recount: read by the scheduled task once due, still unread: due again later, the pages asking then');
+$GLOBALS['api']->next['GET /payments/trx_cron_recount/refunds'] = [];
+forget_kept($s);
+run_cleanup($s, $now + 10);
+check($GLOBALS['payments']->find('trx_cron_recount')->isCounted() && $GLOBALS['recountHint']->at === 0, 'recount: counted by the scheduled task: nothing left for the pages to ask');
 // The cron's token: one for the whole PrestaShop, which only the shop can make.
 check(strlen($s->tokens()->cron()) === 40 && $s->tokens()->cron() !== (new Wajub\PrestaShop\Checkout\Tokens('another-secret'))->cron(), 'the cron address carries a token made with the shop\'s own secret');
 

@@ -53,19 +53,6 @@
       <button type="button" class="btn btn-default" data-wajub-test-connection>{l s='Test connection' d='Modules.Wajub.Admin'}</button>
     {/if}
   </div>
-
-  {if $wajub.sandbox_key_missing}
-    <div class="alert alert-danger" role="alert">
-      <strong>{l s='Wajub takes no payments.' d='Modules.Wajub.Admin'}</strong>
-      {l s='Sandbox is selected and has no key: add your sandbox key, or switch to Live to use your live key.' d='Modules.Wajub.Admin'}
-    </div>
-  {/if}
-  {if $wajub.live_key_missing}
-    <div class="alert alert-danger" role="alert">
-      <strong>{l s='Wajub takes no payments.' d='Modules.Wajub.Admin'}</strong>
-      {l s='Live is selected and has no key: connect Live as well, or switch to Sandbox to use your sandbox key.' d='Modules.Wajub.Admin'}
-    </div>
-  {/if}
 </div>
 
 <div class="panel wajub-pairing" data-wajub-pairing>
@@ -149,6 +136,10 @@
 
   <div class="panel">
     <h3 class="panel-heading">{l s='Environment' d='Modules.Wajub.Admin'}</h3>
+    {* "Wajub takes no payments" is above the tabs, with the page's other notices. *}
+    {if $wajub.plain_http}
+      <div class="alert alert-warning" data-wajub-plain-http>{$wajub.plain_http|escape:'htmlall':'UTF-8'}</div>
+    {/if}
     <fieldset class="wajub-fieldset" {if !$wajub.can_edit}disabled{/if}>
       <legend class="wajub-legend">{l s='Which payments this shop takes' d='Modules.Wajub.Admin'}</legend>
       <div class="radio">

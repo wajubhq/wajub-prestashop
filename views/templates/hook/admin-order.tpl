@@ -5,8 +5,8 @@
  * @copyright Since 2026 Wajub
  * @license   https://opensource.org/licenses/MIT MIT License
  *}
-{* The "Wajub payment" panel of the order page (Admin\OrderPanel). *}
-<link rel="stylesheet" href="{$wajub_order.css|escape:'htmlall':'UTF-8'}">
+{* The "Wajub payment" panel of the order page (Admin\OrderPanel). Its
+   style and script come with the page's own (Wajub::hookActionAdminControllerSetMedia()). *}
 <div class="card mt-2 wajub-order-panel" id="wajub-order-panel" data-wajub-order-panel data-order="{$wajub_order.order_id|intval}" data-ajax-url="{$wajub_order.ajax_url|escape:'htmlall':'UTF-8'}" data-token="{$wajub_order.token|escape:'htmlall':'UTF-8'}" data-refresh="{if $wajub_order.refresh && $wajub_order.can_check}1{else}0{/if}">
   <div class="card-header">
     <h3 class="card-header-title">
@@ -15,6 +15,9 @@
     </h3>
   </div>
   <div class="card-body">
+    {if $wajub_order.group}
+      <p class="alert alert-info wajub-order-panel__group">{$wajub_order.group|escape:'htmlall':'UTF-8'}</p>
+    {/if}
     {if $wajub_order.payments}
       {foreach from=$wajub_order.payments item=payment}
         <dl class="wajub-order-panel__payment">
@@ -66,4 +69,3 @@
     {/if}
   </div>
 </div>
-<script src="{$wajub_order.js|escape:'htmlall':'UTF-8'}" defer></script>

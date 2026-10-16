@@ -2,11 +2,11 @@
 <module>
     <name>wajub</name>
     <displayName><![CDATA[Wajub]]></displayName>
-    <version><![CDATA[1.0.0]]></version>
+    <version><![CDATA[1.0.1]]></version>
     <description><![CDATA[Accept Mobile Money, cards and other payment methods with Wajub.]]></description>
     <author><![CDATA[Wajub]]></author>
     <tab><![CDATA[payments_gateways]]></tab>
-    <confirmUninstall><![CDATA[Uninstalling removes the Wajub settings and keys. Orders, their payments and the record of their Wajub payments stay. Continue?]]></confirmUninstall>
+    <confirmUninstall><![CDATA[Uninstalling removes the Wajub settings, keys and signing secrets. It keeps your orders, their payments, and the record of their Wajub payments, refunds and notes (the tables wajub_payment, wajub_refund and wajub_order_note), which a new install finds again. Continue?]]></confirmUninstall>
     <is_configurable>1</is_configurable>
     <need_instance>0</need_instance>
     <limited_countries></limited_countries>

@@ -56,9 +56,9 @@ class WajubPrepareModuleFrontController extends ModuleFrontController
         Hook::exec('actionWajubPrepareLimits', ['limits' => &$limits]);
 
         $answer = $services->prepareEndpoint()->answer([
-            'kind' => $this->text('kind', 32),
-            'token' => $this->text('token', 64),
-            'renew' => $this->text('renew', 1),
+            'kind' => $this->line((string) Tools::getValue('kind', ''), 32),
+            'token' => $this->line((string) Tools::getValue('token', ''), 64),
+            'renew' => $this->line((string) Tools::getValue('renew', ''), 1),
         ], $view, $expected, $this->clientIp(), PrepareEndpoint::limits(is_array($limits) ? $limits : []));
 
         $this->answerJson($answer['status'], $answer['body'], $answer['status'] === 429 ? PrepareEndpoint::RETRY_AFTER : 0);

@@ -119,6 +119,82 @@ final class PrestaShopShopInfo implements ShopInfo
         return !(defined('_PS_MODE_DEV_') && _PS_MODE_DEV_);
     }
 
+    public function returnsOverHttps(): bool
+    {
+        // As PrestaShop's Link builds a front office address when it is not
+        // told which scheme (Link::getBaseLink()), in the shop the payer is
+        // on: HTTPS once SSL is on, and, on PrestaShop 8, on all pages too.
+        // PrestaShop 9 reads PS_SSL_ENABLED alone: it has no
+        // PS_SSL_ENABLED_EVERYWHERE any more, which would read as off.
+        $allPages = $this->hasSslOnAllPages();
+        foreach ($this->openShopIds() as $idShop) {
+            if (!\Configuration::get('PS_SSL_ENABLED', null, null, $idShop)
+                || ($allPages && !\Configuration::get('PS_SSL_ENABLED_EVERYWHERE', null, null, $idShop))) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * The shops of the scope that payers can reach: a shop switched off in
+     * Advanced Parameters > Multistore takes no payment, and is not judged.
+     *
+     * @return list<int>
+     */
+    private function openShopIds(): array
+    {
+        if ($this->scope->idShop !== null || !\Shop::isFeatureActive()) {
+            return [$this->idShop];
+        }
+        $open = array_values(array_map('intval', (array) \Shop::getShops(true, $this->scope->idShopGroup, true)));
+
+        return $open !== [] ? $open : [$this->idShop];
+    }
+
+    public function hasSslOnAllPages(): bool
+    {
+        return version_compare($this->prestashopVersion(), '9.0.0', '<');
+    }
+
+    public function emptyPaymentPreferences(): array
+    {
+        $idModule = (int) \Module::getModuleIdByName('wajub');
+        if ($idModule <= 0) {
+            return [];
+        }
+        $prefix = _DB_PREFIX_;
+        $module = ' WHERE m.`id_module` = ' . $idModule;
+        $shop = ' AND m.`id_shop` = ' . (int) $this->idShop;
+        // As Hook::getHookModuleExecList() filters the payment modules: a
+        // currency in any shop (or every currency, -1 and -2), the others in
+        // the shop. It filters by carrier only a cart that has one: a shop
+        // with no carrier on (virtual products only) offers Wajub whatever
+        // is ticked, and is never told otherwise.
+        $row = \Db::getInstance()->getRow(
+            'SELECT'
+            . ' (SELECT COUNT(*) FROM `' . $prefix . 'module_currency` m LEFT JOIN `' . $prefix . 'currency` c ON c.`id_currency` = m.`id_currency`' . $module
+            . ' AND (m.`id_currency` IN (-1, -2) OR (c.`active` = 1 AND c.`deleted` = 0))) AS `currencies`,'
+            . ' (SELECT COUNT(*) FROM `' . $prefix . 'module_country` m INNER JOIN `' . $prefix . 'country` c ON c.`id_country` = m.`id_country`' . $module . $shop . ' AND c.`active` = 1) AS `countries`,'
+            . ' (SELECT COUNT(*) FROM `' . $prefix . 'module_group` m' . $module . $shop . ') AS `groups`,'
+            . ' (SELECT COUNT(*) FROM `' . $prefix . 'module_carrier` m INNER JOIN `' . $prefix . 'carrier` c ON c.`id_reference` = m.`id_reference`' . $module . $shop . ' AND c.`active` = 1 AND c.`deleted` = 0) AS `carriers`,'
+            . ' (SELECT COUNT(*) FROM `' . $prefix . 'carrier` c INNER JOIN `' . $prefix . 'carrier_shop` cs ON cs.`id_carrier` = c.`id_carrier` AND cs.`id_shop` = ' . (int) $this->idShop . ' WHERE c.`active` = 1 AND c.`deleted` = 0) AS `shop_carriers`',
+            false
+        );
+        if (!is_array($row)) {
+            return [];
+        }
+        $empty = [];
+        foreach (['currencies', 'countries', 'groups', 'carriers'] as $list) {
+            if ((int) ($row[$list] ?? 1) === 0 && ($list !== 'carriers' || (int) ($row['shop_carriers'] ?? 0) > 0)) {
+                $empty[] = $list;
+            }
+        }
+
+        return $empty;
+    }
+
     public function moduleVersion(): string
     {
         return $this->moduleVersion;

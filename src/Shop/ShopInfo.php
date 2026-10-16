@@ -52,6 +52,37 @@ interface ShopInfo
      */
     public function isProduction(): bool;
 
+    /**
+     * Whether Wajub can send payers back to the shops of this scope that
+     * are on (one switched off takes no payment): their addresses are HTTPS, as PrestaShop builds the module's return address
+     * (Checkout\PrestaShopStorefront): SSL turned on and, where PrestaShop
+     * has that setting (hasSslOnAllPages()), on all pages too. In Live,
+     * Wajub returns payers to HTTPS addresses only
+     * (Checkout\PreparedPayments::callback()).
+     */
+    public function returnsOverHttps(): bool;
+
+    /**
+     * Whether PrestaShop has the "SSL on all pages" setting
+     * (PS_SSL_ENABLED_EVERYWHERE), which its addresses need besides SSL to be
+     * HTTPS: PrestaShop 8. PrestaShop 9 dropped it, setting and value: SSL
+     * alone makes every address HTTPS there, and the back office asks for
+     * nothing more.
+     */
+    public function hasSslOnAllPages(): bool;
+
+    /**
+     * The lists of Payment > Preferences in which nothing is ticked for the
+     * module, for the shop the scope speaks for: 'currencies', 'countries',
+     * 'groups', 'carriers' (only what is active counts; carriers only in a
+     * shop that has one on, as PrestaShop filters by carrier only a cart
+     * that has one). PrestaShop offers the module to no customer then,
+     * whatever its settings say.
+     *
+     * @return list<string>
+     */
+    public function emptyPaymentPreferences(): array;
+
     public function moduleVersion(): string;
 
     public function prestashopVersion(): string;

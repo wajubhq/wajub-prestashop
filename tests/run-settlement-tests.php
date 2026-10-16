@@ -302,6 +302,33 @@ check($left['to'] === Release::TO_CHECKOUT && $left['message'] === 'Your cart is
 check(in_array('DELETE ' . API . '/payments/trx_test_1', $GLOBALS['http']->routes(), true) && $GLOBALS['payments']->find('trx_test_1')->status === 'cancelled', 'the payment cancelled with Wajub first: it can never be approved afterwards');
 check($GLOBALS['orders']->state(9) === FakeShopOrders::CANCELED && $GLOBALS['storefront']->restored === [9], 'the order cancelled, its cart given back');
 
+check($GLOBALS['orders']->noted(9, 'left Wajub payment trx_test_1 without paying (they chose another payment method): the order was cancelled') && !$GLOBALS['orders']->noted(9, '(switch)'), 'the merchant reads why in words, never the scripts\' code: ' . implode(' | ', array_column($GLOBALS['orders']->notes(9), 'message')));
+// The payment's webhook, which follows: the shop cancelled it, the customer
+// chose another method; never "did not complete".
+webhook($s, 'payment.cancelled', payment_data('trx_test_1', 'cancelled'));
+check($GLOBALS['orders']->noted(9, 'Wajub payment trx_test_1 was cancelled by the shop, before anyone paid it (Wajub status: cancelled).') && !$GLOBALS['orders']->noted(9, 'The customer did not complete'), 'its webhook: noted as cancelled by the shop');
+
+// Cancelled on the payer's phone, settled by the status the page follows
+// before the payer left: Wajub.js says "failed", Wajub says cancelled.
+$s = shop_with_order();
+$s->heldConfirmations()->hold(['template' => 'order_conf', 'templateVars' => ['{id_order}' => 9], 'to' => 'payer@example.cm']);
+read_as('trx_test_1', payment_data('trx_test_1', 'cancelled'));
+$answer = $s->statusAnswer()->answer($GLOBALS['orders']->find(9));
+check($answer['status'] === 'failed' && $answer['reason'] === 'cancelled' && $GLOBALS['payments']->find('trx_test_1')->state === PaymentRecord::FINAL, 'cancelled on the phone: the page reads it ended, the payment settled');
+$left = $s->release()->leave($GLOBALS['orders']->find(9), 'failed');
+check($left['to'] === Release::TO_CHECKOUT && $left['tone'] === 'info' && str_contains($left['message'], 'You cancelled the payment. Your cart is back') && !str_contains($left['message'], 'declined or failed'), 'the payer reads it was cancelled, as Wajub says, not that it failed: ' . $left['message']);
+check($GLOBALS['orders']->noted(9, 'left Wajub payment trx_test_1 without paying (the payment was cancelled): the order was cancelled') && !$GLOBALS['orders']->noted(9, '(failed)'), 'and so does the merchant: ' . implode(' | ', array_column($GLOBALS['orders']->notes(9), 'message')));
+check(!$s->heldConfirmations()->holds(9), 'the order given back as a cart: its confirmation e-mail, never to be sent, is forgotten');
+webhook($s, 'payment.cancelled', payment_data('trx_test_1', 'cancelled'));
+check($GLOBALS['orders']->noted(9, 'The customer did not complete Wajub payment trx_test_1 (Wajub status: cancelled).') && !$GLOBALS['orders']->noted(9, 'cancelled by the shop'), 'its webhook: one the customer cancelled is noted as such');
+
+// Refused, settled before the payer left: said as failed.
+$s = shop_with_order();
+read_as('trx_test_1', payment_data('trx_test_1', 'failed'));
+$s->statusAnswer()->answer($GLOBALS['orders']->find(9));
+$left = $s->release()->leave($GLOBALS['orders']->find(9), 'failed');
+check($left['tone'] === 'error' && str_contains($left['message'], 'declined or failed') && $GLOBALS['orders']->noted(9, 'without paying (the payment was declined or failed)'), 'refused: the payer and the merchant read it failed');
+
 $s = shop_with_order();
 read_as('trx_test_1', payment_data('trx_test_1', 'processing'));
 $left = $s->release()->leave($GLOBALS['orders']->find(9), 'switch');
@@ -387,10 +414,12 @@ check($left['to'] === Release::STAY && $GLOBALS['orders']->state(9) === FakeShop
 // signed out on the confirmation page, the link opened in another browser.
 $s = shop_with_order();
 $GLOBALS['storefront']->visitorIsCustomer = false;
+$s->heldConfirmations()->hold(['template' => 'order_conf', 'templateVars' => ['{id_order}' => 9], 'to' => 'payer@example.cm']);
 read_as('trx_test_1', payment_data('trx_test_1', 'failed'));
 $left = $s->release()->leave($GLOBALS['orders']->find(9), 'failed');
 check($left['to'] === Release::TO_CHECKOUT && !str_contains($left['message'], 'Your cart is back') && str_contains($left['message'], 'could not be restored here'), '"Try again" where the cart cannot come back: the payer is told so, never that it is back');
 check($GLOBALS['orders']->state(9) !== FakeShopOrders::CANCELED && $GLOBALS['orders']->noted(9, 'could not be given back to them as a cart'), 'the order is left as it is, with a note for the merchant');
+check($GLOBALS['orders']->noted(9, 'without paying (the payment was declined or failed), signed out') && $s->heldConfirmations()->holds(9), 'saying why in words; the order left as it is keeps its confirmation e-mail');
 
 $s = shop_with_order();
 $GLOBALS['storefront']->visitorIsCustomer = false;

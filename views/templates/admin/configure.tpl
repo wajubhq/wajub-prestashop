@@ -24,8 +24,8 @@
     </p>
   </div>
 
-  {if $wajub.key_notices}
-    {include file="../hook/admin-key-notice.tpl" wajub_key_notices=$wajub.key_notices}
+  {if $wajub.top_notices}
+    {include file="../hook/admin-notices.tpl" wajub_notices=$wajub.top_notices}
   {/if}
 
   {foreach from=$wajub.notices item=notice}

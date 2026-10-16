@@ -30,6 +30,8 @@
 #   POST /payments/{id}/close           closes one between two instalments, keeping what it collected
 #   GET  /payments/{id}/refunds         its refunds
 #   POST /refunds                       a refund (the same Idempotency-Key answers the same refund)
+#   GET  /webhooks                      the endpoints set by POST /__stub/webhooks
+#   PUT  /webhooks/{id}                 an endpoint's events and state changed
 # And for the tests:
 #   POST /__stub/payments/{id}          sets fields of a payment (status, amount_paid…)
 #   GET  /__stub/payments/{id}          the payment as kept, with what activated it
@@ -37,6 +39,9 @@
 #   POST /__stub/fail                   {"path": "...", "status": 503, "times": 1}: the next calls fail
 #   POST /__stub/slow                   {"path": "...", "seconds": 3, "times": 1}: the next calls answer late
 #   GET  /__stub/refunds                every refund made, in order
+#   POST /__stub/refunds                {"transaction", "amount", "status"}: a refund made out of the shop's sight
+#   POST /__stub/webhooks               {"items": [...]}: the endpoints GET /webhooks lists
+#   GET  /__stub/webhooks               the endpoints, as PUT left them
 
 import hashlib
 import json
@@ -61,6 +66,7 @@ OPTIONS = [
 ]
 FAILURES = []
 SLOW = []
+WEBHOOKS = []
 
 
 def iso(seconds_from_now):
@@ -140,6 +146,18 @@ class Handler(BaseHTTPRequestHandler):
             return self.create(body, sandbox)
         if self.command == "POST" and path == "/refunds":
             return self.refund(body, sandbox, self.headers.get("Idempotency-Key", ""))
+
+        if self.command == "GET" and path == "/webhooks":
+            with LOCK:
+                return self.send(200, {"items": list(WEBHOOKS)})
+        match = re.fullmatch(r"/webhooks/([A-Za-z0-9_]+)", path)
+        if match and self.command == "PUT":
+            with LOCK:
+                for endpoint in WEBHOOKS:
+                    if endpoint.get("id") == match.group(1):
+                        endpoint.update({k: v for k, v in body.items() if k in ("events", "active", "url", "description")})
+                        return self.send(200, endpoint)
+            return self.send(404, {"message": "Webhook endpoint not found."})
 
         match = re.fullmatch(r"/payments/([A-Za-z0-9_]+)(/activate|/refunds|/close)?", path)
         if match:
@@ -266,7 +284,7 @@ class Handler(BaseHTTPRequestHandler):
         return self.send(200, {"activated": True})
 
     def control(self, path, body):
-        global OPTIONS
+        global OPTIONS, WEBHOOKS
         match = re.fullmatch(r"/__stub/payments/([A-Za-z0-9_]+)", path)
         if match:
             with LOCK:
@@ -285,6 +303,30 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/__stub/refunds" and self.command == "GET":
             with LOCK:
                 return self.send(200, {"items": list(REFUNDS)})
+        if path == "/__stub/refunds" and self.command == "POST":
+            # A refund made out of the shop's sight (in the Wajub Dashboard,
+            # its webhook never sent): GET /payments/{id}/refunds lists it.
+            with LOCK:
+                payment = PAYMENTS.get(body.get("transaction", ""))
+                if payment is None:
+                    return self.send(404, {"message": "No such payment."})
+                refund = {
+                    "id": body.get("id") or "rfd_outside%d_%d" % (int(time.time()) % 100000, len(REFUNDS) + 1),
+                    "transaction": payment["id"],
+                    "amount": float(body.get("amount", 0)),
+                    "currency": payment["currency"],
+                    "status": body.get("status", "succeeded"),
+                    "reason": "requested_by_customer",
+                    "metadata": {},
+                    "sandbox": payment["sandbox"],
+                }
+                REFUNDS.append(refund)
+            return self.send(201, {"refund": refund})
+        if path == "/__stub/webhooks":
+            with LOCK:
+                if self.command == "POST":
+                    WEBHOOKS = list(body.get("items", []))
+                return self.send(200, {"items": list(WEBHOOKS)})
         if path == "/__stub/slow" and self.command == "POST":
             with LOCK:
                 SLOW.append({"path": body["path"], "seconds": float(body.get("seconds", 3)), "times": int(body.get("times", 1))})

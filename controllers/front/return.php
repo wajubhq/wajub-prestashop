@@ -44,12 +44,12 @@ class WajubReturnModuleFrontController extends ModuleFrontController
         }
 
         $services = $this->module->servicesFor((int) $order->id_shop);
-        if (!Tokens::matches($services->tokens()->order((int) $order->id, (string) $order->secure_key), $this->text('token', 64))) {
+        if (!Tokens::matches($services->tokens()->order((int) $order->id, (string) $order->secure_key), $this->line((string) Tools::getValue('token', ''), 64))) {
             Tools::redirect($this->context->link->getPageLink('order'));
         }
 
         $lock = $services->lock();
-        $name = 'order:' . (int) $order->id;
+        $name = 'order:' . $services->orders()->leadId((int) $order->id);
         $where = ['url' => $this->context->link->getPageLink('order'), 'message' => '', 'tone' => 'info'];
         if ($lock->acquire($name, self::LOCK_WAIT)) {
             try {

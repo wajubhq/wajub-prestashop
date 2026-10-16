@@ -81,7 +81,7 @@ final class RefundEventHandler implements EventHandler
 
         $services = ($this->servicesFor)($record->idShop);
         $lock = $services->lock();
-        $name = 'order:' . $record->idOrder;
+        $name = 'order:' . $services->orders()->leadId($record->idOrder);
         if (!$lock->acquire($name, self::LOCK_WAIT)) {
             // Another request holds it: Wajub sends this delivery again.
             throw new \RuntimeException('The order is being updated by another request');

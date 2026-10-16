@@ -1,0 +1,17 @@
+# Wajub for PrestaShop
+#
+# @author    Wajub
+# @copyright Since 2026 Wajub
+# @license   https://opensource.org/licenses/MIT MIT License
+#
+# The back office's Symfony services of the module, which PrestaShop loads
+# for an installed module that is on: at the end of a request of the back
+# office (kernel.terminate, once the answer is sent), the refunds of the
+# order page's forms that no credit slip records are recorded, and the
+# orders' locks let go (Wajub\PrestaShop\Refund\RefundFormsEnd).
+services:
+  wajub.refund_forms_end:
+    class: Wajub\PrestaShop\Refund\RefundFormsEnd
+    public: false
+    tags:
+      - { name: kernel.event_subscriber }

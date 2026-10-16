@@ -4,6 +4,32 @@ What changes for merchants and their customers, version by version. The
 version at the top is `Wajub::VERSION` in `wajub.php` and `<version>` in
 `config.xml`.
 
+## 1.0.1 — unreleased
+
+- A refund from the order page that Wajub refuses makes no credit slip on PrestaShop 8 with debug mode off too (PrestaShop 8 used to go on and make it), and the page says why. The module runs last on the refund forms, even after a module installed later.
+- A refund with "Product prices, excluding the voucher" (the forms' choice by default) counts as refunded what the customer got back, the voucher taken off, as Wajub refunded it, though PrestaShop's order page lists the slip without taking it off.
+- A refund of a customer whose group is shown prices without tax gives back what the credit slip says, tax included.
+- An order PrestaShop splits into several (products shipped by different carriers) is paid, refunded, checked and cancelled as one: its payments, "Pay the rest", "Check status", refunds of any of its orders and its notes. Each order's Wajub block and the customer's "left to pay" line say their amounts are those of all the orders of the reference, and a refund made in the Wajub Dashboard becomes one credit slip per order, each up to its own total.
+- A payment whose refunds Wajub could not tell as it went through is read again about five minutes later, from the shop's next pages, without waiting for the scheduled task; the pages ask at most once a minute while one is still due, never again for an order that was deleted, and a read that fails waits 15 minutes, then an hour.
+- The webhook also listens to the instalments of a payment paid in instalments, and to live refunds under way; a shop registered before is given these events when the module is updated.
+- Refunds take back from the payment made last first, by when Wajub made each payment.
+- MySQL 5.6: the module never holds two database locks at once.
+- The credit slip of a refund from the order page records what Wajub refunded as soon as PrestaShop adds it, even when another module's hook then stops PrestaShop with a PHP error; the order then tells the merchant to check the refunded quantities PrestaShop did not write.
+- The back office says what matters where it matters, as the WordPress plugin does, to employees who can change the Wajub settings (a profile that may only read them sees the Sandbox badge alone, and not the scheduled task's address), never in the pages shown in a frame (Orders > Add new order): "Wajub takes no payments" on every page when the environment chosen has no key; "Wajub · Sandbox" in the header of every page while the shop takes test payments; "Wajub is in Sandbox" on a shop the public uses (debug mode off) that still takes test payments; "Finish setting up Wajub"; "Wajub is not offered at checkout" (every method off, or nothing ticked for Wajub in Payment > Preferences); and the scheduled task that never ran, or not for hours, with how to run it and its address to copy. Each but "takes no payments" can be hidden for 7 days. None asks Wajub anything.
+- Mobile Money and Card in Live on a shop not served over HTTPS: the settings, and the confirmation of the switch to Live, say that payers sent to their bank's or operator's page cannot come back, and how to turn SSL on (on PrestaShop 8, on all pages too; PrestaShop 9 has SSL alone).
+- The Payment methods tab says when the scheduled task last ran, and copies its address.
+- The uninstall confirmation names what it keeps: the orders, and the tables of their Wajub payments, refunds and notes.
+- An order given back as a cart says why in words for the merchant ("they chose another payment method", "the payment was cancelled"…), never a code, and a Mobile Money payment cancelled on the payer's phone reads as cancelled, for the payer too, not as declined or failed.
+- An order the scheduled task cancels after a delay of one minute says "within 1 minute"; the Wajub webhook of a payment the shop cancelled itself (an order given back as a cart, or left unpaid past the delay) says the shop cancelled it, not the customer.
+- The confirmation e-mail held for an order is deleted as soon as the module cancels the order (given back as a cart, or left unpaid past the delay), rather than kept 30 days: it would never be sent, and holds the customer's name, e-mail address and addresses.
+- A refund from the order page that Wajub refuses as more than it can refund has the order's refunds read from Wajub: one made in the Wajub Dashboard whose notification never reached the shop is recorded on the order as a credit slip, and the message says so. Wajub's refusals no longer repeat the HTTP status as a code ("(HTTP 422)").
+- A shop at a local address (localhost) is told how to receive its Sandbox events with the Wajub CLI: the `wajub listen --forward-to …` command for its webhook address, ready to copy, and where to paste the secret `wajub listen --print-secret` shows, instead of a tunnel and an endpoint the Wajub Dashboard would refuse.
+- For PrestaShop Addons: the checkout's logos are a picture file (no data written in the page), messages for the next page go through PrestaShop's notifications, the order page's Wajub panel loads its style and script through PrestaShop, the end of a refund's request is Symfony's, every request value is cast as it is read, the zip's composer.json leaves out the developers' part, the module says it runs on PrestaShop 8.1 to 9.x, and a .htaccess refuses any request for one of the module's PHP files.
+- "Wajub is not offered at checkout" no longer shows on a shop without any carrier on (virtual products only), and the HTTPS warning of a group or of all shops leaves out the shops switched off.
+- An unpaid order kept past the delay because Wajub is still processing its payment (a card at its 3-D Secure challenge) says so once, for the merchant.
+- The note that PrestaShop may have stopped after the credit slip of a refund stays when another module's hook fails after the module's and the page ends in an error: the merchant checks the refunded quantities before refunding again.
+- A payment read again from the shop's pages is read when due, however many payments whose reads ran out the shop keeps; one whose read failed before its order was locked is read again later, not on the next page.
+
 ## 1.0.0 — unreleased
 
 First version, for PrestaShop 8.1 to 9 and PHP 8.1 or later.

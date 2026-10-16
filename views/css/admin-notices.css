@@ -1,0 +1,98 @@
+/**
+ * Wajub for PrestaShop
+ *
+ * @author    Wajub
+ * @copyright Since 2026 Wajub
+ * @license   https://opensource.org/licenses/MIT MIT License
+ *
+ * The module's notices on every page of the back office (Bootstrap's own
+ * alerts, PrestaShop 8 and 9), and "Wajub · Sandbox" in its header.
+ */
+.wajub-notice__text {
+  margin: 0;
+}
+
+.wajub-notice__actions {
+  margin: 8px 0 0;
+}
+
+.wajub-notice__actions a {
+  display: inline-block;
+  margin-right: 16px;
+  text-decoration: underline;
+}
+
+/* In the alert's own text colour: the back office's link colour is too
+   light on its yellow and blue alerts. */
+.wajub-notice__actions a.wajub-notice__hide {
+  color: inherit;
+  font-weight: 400;
+}
+
+.wajub-notice__copy {
+  margin: 8px 0 0;
+  max-width: 760px;
+}
+
+.wajub-notice__label {
+  display: block;
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
+.wajub-notice__field-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.wajub-notice__field {
+  flex: 1 1 280px;
+  min-width: 0;
+  font-family: SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.wajub-notice [hidden] {
+  display: none !important;
+}
+
+.wajub-notice__copied:not(:empty) {
+  display: block;
+  margin-top: 4px;
+}
+
+/* White on amber-700: 5:1, as the plugin's toolbar. */
+.wajub-env-badge,
+a.wajub-env-badge:visited {
+  display: inline-block;
+  align-self: center;
+  margin: 0 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #b45309;
+  color: #fff !important;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+  text-decoration: none !important;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.wajub-env-badge:hover,
+.wajub-env-badge:focus {
+  background: #92400e;
+}
+
+.wajub-env-badge:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: -4px;
+}
+
+/* PrestaShop's legacy header (#header_infos) floats its parts. */
+#header_infos > .wajub-env-badge {
+  float: right;
+  margin-top: 10px;
+}

@@ -61,6 +61,20 @@ final class Settings
 
     public const STATE_PARTIAL = 'WAJUB_OS_PARTIAL';
 
+    /**
+     * When the soonest payment that could not count is due to be read again
+     * (Order\ConfigRecountHint): for all shops, as the scheduled task is.
+     */
+    public const RECOUNT_AT = 'WAJUB_RECOUNT_AT';
+
+    /**
+     * When the scheduled task last ran, and from when it is waited for
+     * (Order\ConfigTaskLog): for all shops, as the task is.
+     */
+    public const TASK_LAST_RUN = 'WAJUB_TASK_LAST_RUN';
+
+    public const TASK_SINCE = 'WAJUB_TASK_SINCE';
+
     /** @var array<string, string> environment => key of its secret key */
     private const SECRET_KEYS = [
         self::SANDBOX => 'WAJUB_SECRET_KEY_SANDBOX',
@@ -121,7 +135,7 @@ final class Settings
      */
     public static function allKeys(): array
     {
-        $keys = [self::ENVIRONMENT, self::DEBUG_LOG, self::FORM_THEME, self::SECURED_LINE, self::OPERATOR_FROM_NUMBER, self::CANCEL_AFTER, self::STATE_AWAITING, self::STATE_PARTIAL];
+        $keys = [self::ENVIRONMENT, self::DEBUG_LOG, self::FORM_THEME, self::SECURED_LINE, self::OPERATOR_FROM_NUMBER, self::CANCEL_AFTER, self::STATE_AWAITING, self::STATE_PARTIAL, self::RECOUNT_AT, self::TASK_LAST_RUN, self::TASK_SINCE];
         foreach ([self::SECRET_KEYS, self::WEBHOOK_SECRETS, self::KEY_ORIGINS, self::WEBHOOK_ENDPOINTS] as $byEnvironment) {
             $keys = array_merge($keys, array_values($byEnvironment));
         }
@@ -455,6 +469,28 @@ final class Settings
     public static function connectionKeys(): array
     {
         return array_merge([self::ENVIRONMENT], array_values(self::SECRET_KEYS), array_values(self::KEY_ORIGINS), array_values(self::WEBHOOK_SECRETS), array_values(self::WEBHOOK_ENDPOINTS));
+    }
+
+    /**
+     * The scopes of this PrestaShop that registered a webhook endpoint of
+     * their own, in either environment, by slug: what an upgrade that
+     * listens to more events updates (WebhookRegistration::addMissingEvents()).
+     *
+     * @return list<string>
+     */
+    public function webhookEndpointsEverywhere(): array
+    {
+        $slugs = [];
+        foreach (self::WEBHOOK_ENDPOINTS as $key) {
+            foreach ($this->store->savedAt($key) as $slug => $stored) {
+                $data = $stored !== '' ? json_decode($stored, true) : null;
+                if (self::endpointFrom(is_array($data) ? $data : null) !== null) {
+                    $slugs[] = (string) $slug;
+                }
+            }
+        }
+
+        return array_values(array_unique($slugs));
     }
 
     /**

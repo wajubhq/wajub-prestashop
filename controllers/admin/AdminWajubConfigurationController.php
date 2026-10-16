@@ -11,6 +11,7 @@ if (!defined('_PS_VERSION_')) {
     exit;
 }
 
+use Symfony\Component\HttpFoundation\Request;
 use Wajub\PrestaShop\Admin\AdminToken;
 use Wajub\PrestaShop\Admin\AjaxActions;
 use Wajub\PrestaShop\Admin\ConfigurationView;
@@ -87,7 +88,9 @@ class AdminWajubConfigurationController extends ModuleAdminController
                     'testing' => $t->trans('Checking…', [], 'Modules.Wajub.Admin'),
                     'registering' => $t->trans('Registering…', [], 'Modules.Wajub.Admin'),
                     'requestFailed' => $t->trans('The request did not go through. Check your connection and try again.', [], 'Modules.Wajub.Admin'),
-                    'confirmLive' => $t->trans('Switch to Live? This shop will take real payments with your live key.', [], 'Modules.Wajub.Admin'),
+                    // With why Mobile Money and Card cannot bring payers back
+                    // to a shop not served over HTTPS, before Live is saved.
+                    'confirmLive' => $t->trans('Switch to Live? This shop will take real payments with your live key.', [], 'Modules.Wajub.Admin') . ($view['plain_http_if_live'] !== '' ? "\n\n" . $view['plain_http_if_live'] : ''),
                     'copied' => $t->trans('Copied.', [], 'Modules.Wajub.Admin'),
                 ],
             ],
@@ -113,15 +116,20 @@ class AdminWajubConfigurationController extends ModuleAdminController
             ],
         ]);
 
+        if (!$this->access('edit')) {
+            // The scheduled task's address holds its secret: for who may change the settings.
+            $view['cron_url'] = '';
+        }
         $this->context->smarty->assign([
             'wajub' => $view + [
                 'active_tab' => in_array($tab, ConfigurationView::TABS, true) ? $tab : 'connection',
                 'form_action' => $this->context->link->getAdminLink($this->controller_name),
                 'csrf_token' => $this->csrfToken(),
                 'notices' => $this->takeFlash($employeeId),
-                // Shown by the page itself, on every tab: PrestaShop 9 draws
-                // a legacy page without displayAdminAfterHeader.
-                'key_notices' => $this->module->keyNotices(),
+                // The back office's notices, shown by the page itself above
+                // its tabs: PrestaShop 9 draws a legacy page without
+                // displayAdminAfterHeader.
+                'top_notices' => $this->module->adminNotices()['notices'],
                 'img_uri' => $this->module->getPathUri() . 'views/img/',
                 'logo_uri' => $this->module->getPathUri() . 'logo.png',
                 'version' => $this->module->version,
@@ -135,10 +143,17 @@ class AdminWajubConfigurationController extends ModuleAdminController
 
     /**
      * A form of the page: saved for the scope in context, then the page is
-     * loaded again on the same tab, with what the save said.
+     * loaded again on the same tab, with what the save said. Or "Hide for 7
+     * days" on one of the module's notices, on any page of the back office:
+     * the employee goes back to it.
      */
     public function postProcess()
     {
+        if (!$this->ajax && Tools::getIsset('wajub_hide')) {
+            $this->hideNotice();
+
+            return true;
+        }
         if (!$this->ajax && Tools::isSubmit('submitWajubForm')) {
             $form = (string) Tools::getValue('wajub_form');
             $employeeId = (int) $this->context->employee->id;
@@ -196,6 +211,35 @@ class AdminWajubConfigurationController extends ModuleAdminController
         return $this->module->services();
     }
 
+    /**
+     * "Hide for 7 days" (Admin\Notices::hide()): for the employee who may
+     * see the notice, with the page's token, then back to the page the
+     * notice was on (only a page of this back office), or to the settings.
+     */
+    private function hideNotice(): void
+    {
+        // Only who is shown the notices may hide them: who may change the settings.
+        if (!$this->access('edit') || !$this->tokenIsValid()) {
+            $this->errors[] = $this->services()->translator()->trans('This page has expired. Reload it, then try again.', [], 'Modules.Wajub.Admin');
+
+            return;
+        }
+        $this->module->hideAdminNotice((string) Tools::getValue('wajub_hide'));
+
+        $back = $this->context->link->getAdminLink($this->controller_name);
+        $referer = (string) Request::createFromGlobals()->headers->get('referer', '');
+        $parts = parse_url($referer);
+        $admin = '/' . basename((string) _PS_ADMIN_DIR_) . '/';
+        $path = is_array($parts) && isset($parts['path']) ? (string) $parts['path'] : '';
+        // Its path and query only: always this back office's host. A path
+        // a browser would read as another host's ("//host/…", "/\host/…")
+        // is not one.
+        if (str_contains($path, $admin) && $path[0] === '/' && preg_match('#^/[/\\\\]|\\\\#', $path) !== 1) {
+            $back = $path . (isset($parts['query']) ? '?' . $parts['query'] : '');
+        }
+        Tools::redirectAdmin($back);
+    }
+
     /** The page's token (Admin\AdminToken), sent back with every form and AJAX call. */
     private function csrfToken(): string
     {
@@ -204,28 +248,61 @@ class AdminWajubConfigurationController extends ModuleAdminController
 
     private function tokenIsValid(): bool
     {
-        $sent = Tools::getValue('wajub_token');
+        $sent = (string) Tools::getValue('wajub_token');
 
-        return is_string($sent) && $sent !== '' && hash_equals($this->csrfToken(), $sent);
+        return $sent !== '' && hash_equals($this->csrfToken(), $sent);
     }
 
     /**
-     * What the form or the AJAX call sent, as Tools::getValue() reads it
-     * (the posted value, else the address's): FormHandler and AjaxActions
-     * read each value they know, as the type it must be.
+     * What the form or the AJAX call sent (the posted value, else the
+     * address's), each field the page's forms and buttons have, read by its
+     * name as the type it is: text, or, for the fields by language and the
+     * logos ticked, a list. A field not sent reads empty, as an unticked box
+     * does. FormHandler and AjaxActions check each value again.
      *
      * @return array<string, mixed>
      */
     private function posted(): array
     {
-        $posted = [];
-        foreach (array_keys(Tools::getAllValues()) as $name) {
-            if (is_string($name) && preg_match('/^[a-z_]{1,64}$/', $name) === 1) {
-                $posted[$name] = Tools::getValue($name);
-            }
-        }
-
-        return $posted;
+        return [
+            // Connection
+            'environment' => (string) Tools::getValue('environment', ''),
+            'sandbox_key' => (string) Tools::getValue('sandbox_key', ''),
+            'live_key' => (string) Tools::getValue('live_key', ''),
+            'remove_sandbox_key' => (string) Tools::getValue('remove_sandbox_key', ''),
+            'remove_live_key' => (string) Tools::getValue('remove_live_key', ''),
+            'debug_log' => (string) Tools::getValue('debug_log', ''),
+            // Payment methods, one by one (Payment\Methods::KINDS)
+            'mobile_money_enabled' => (string) Tools::getValue('mobile_money_enabled', ''),
+            'mobile_money_title' => (array) Tools::getValue('mobile_money_title', []),
+            'mobile_money_description' => (array) Tools::getValue('mobile_money_description', []),
+            'mobile_money_no_description' => (string) Tools::getValue('mobile_money_no_description', ''),
+            'mobile_money_logos' => (array) Tools::getValue('mobile_money_logos', []),
+            'mobile_money_operator' => (string) Tools::getValue('mobile_money_operator', ''),
+            'card_enabled' => (string) Tools::getValue('card_enabled', ''),
+            'card_title' => (array) Tools::getValue('card_title', []),
+            'card_description' => (array) Tools::getValue('card_description', []),
+            'card_no_description' => (string) Tools::getValue('card_no_description', ''),
+            'card_logos' => (array) Tools::getValue('card_logos', []),
+            'other_enabled' => (string) Tools::getValue('other_enabled', ''),
+            'other_title' => (array) Tools::getValue('other_title', []),
+            'other_description' => (array) Tools::getValue('other_description', []),
+            'other_no_description' => (string) Tools::getValue('other_no_description', ''),
+            'other_logos' => (array) Tools::getValue('other_logos', []),
+            'cancel_after' => (string) Tools::getValue('cancel_after', ''),
+            // Appearance
+            'form_theme' => (string) Tools::getValue('form_theme', ''),
+            'secured_line' => (string) Tools::getValue('secured_line', ''),
+            // Webhooks
+            'sandbox_secret' => (string) Tools::getValue('sandbox_secret', ''),
+            'live_secret' => (string) Tools::getValue('live_secret', ''),
+            'remove_sandbox_secret' => (string) Tools::getValue('remove_sandbox_secret', ''),
+            'remove_live_secret' => (string) Tools::getValue('remove_live_secret', ''),
+            // The buttons (AJAX)
+            'rotate' => (string) Tools::getValue('rotate', ''),
+            'id_order' => (int) Tools::getValue('id_order', 0),
+            'code' => (string) Tools::getValue('code', ''),
+        ];
     }
 
     /**

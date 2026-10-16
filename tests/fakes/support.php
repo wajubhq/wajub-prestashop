@@ -16,6 +16,7 @@ if (PHP_SAPI !== 'cli') {
 use Wajub\PrestaShop\Http\HttpResponse;
 use Wajub\PrestaShop\Http\Transport;
 use Wajub\PrestaShop\Http\TransportException;
+use Wajub\PrestaShop\Order\TaskLog;
 use Wajub\PrestaShop\Services;
 use Wajub\PrestaShop\Settings\ConfigStore;
 use Wajub\PrestaShop\Settings\Scope;
@@ -349,6 +350,15 @@ final class FakeShop implements ShopInfo
     /** @var list<int> the shops of the scope; the shop itself when empty */
     public array $shopIds = [];
 
+    /** Whether the shop's addresses are HTTPS (PrestaShop's SSL on, on all pages where it asks). */
+    public bool $https = true;
+
+    /** Whether PrestaShop has its "SSL on all pages" setting: 8 yes, 9 no. */
+    public bool $sslOnAllPages = true;
+
+    /** @var list<string> the lists of Payment > Preferences with nothing ticked for the module */
+    public array $emptyPreferences = [];
+
     public function id(): int
     {
         return $this->id;
@@ -384,6 +394,21 @@ final class FakeShop implements ShopInfo
         return $this->production;
     }
 
+    public function returnsOverHttps(): bool
+    {
+        return $this->https;
+    }
+
+    public function hasSslOnAllPages(): bool
+    {
+        return $this->sslOnAllPages;
+    }
+
+    public function emptyPaymentPreferences(): array
+    {
+        return $this->emptyPreferences;
+    }
+
     public function moduleVersion(): string
     {
         return '1.0.0';
@@ -392,6 +417,36 @@ final class FakeShop implements ShopInfo
     public function prestashopVersion(): string
     {
         return '8.2.8';
+    }
+}
+
+/** The scheduled task's log, in memory. */
+final class MemoryTaskLog implements TaskLog
+{
+    public int $last = 0;
+
+    public int $since = 0;
+
+    public function lastRun(): int
+    {
+        return $this->last;
+    }
+
+    public function since(): int
+    {
+        return $this->since;
+    }
+
+    public function ran(int $at): void
+    {
+        $this->last = $at;
+    }
+
+    public function watch(int $at): void
+    {
+        if ($this->since === 0) {
+            $this->since = $at;
+        }
     }
 }
 
@@ -481,7 +536,7 @@ final class MemoryEventStore implements EventStore
  * The module's services on stand-ins, for `scope`, with a fresh store of
  * settings unless `keep` is true. The stand-ins are reachable as
  * $GLOBALS['http'] (transport), ['store'] (state), ['logger'], ['translator'],
- * ['shop'], ['events'] and ['mailer']: names no runner uses for a variable
+ * ['shop'], ['events'], ['mailer'] and ['taskLog']: names no runner uses for a variable
  * of its own, since a runner's top-level variables are globals too.
  *
  * @param array<string, mixed> $settings Configuration keys and values for all shops
@@ -497,6 +552,7 @@ function services(array $settings = [], ?Scope $scope = null, bool $keep = false
         $GLOBALS['shop'] = new FakeShop();
         $GLOBALS['events'] = new MemoryEventStore();
         $GLOBALS['mailer'] = new FakeMailer();
+        $GLOBALS['taskLog'] = new MemoryTaskLog();
     }
     $scope = $scope ?? Scope::allShops();
     $store = new ArrayConfigStore($scope);
@@ -514,6 +570,7 @@ function services(array $settings = [], ?Scope $scope = null, bool $keep = false
         'shop' => $GLOBALS['shop'],
         'events' => $GLOBALS['events'],
         'mailer' => $GLOBALS['mailer'],
+        'taskLog' => $GLOBALS['taskLog'],
         'pause' => static function (int $milliseconds): void {
             $GLOBALS['paused'][] = $milliseconds;
         },

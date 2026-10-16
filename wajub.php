@@ -18,9 +18,9 @@ if (PHP_VERSION_ID >= 80100) {
     require_once __DIR__ . '/vendor/autoload.php';
 }
 
-use PrestaShop\PrestaShop\Core\Module\Exception\ModuleErrorException;
 use PrestaShop\PrestaShop\Core\Payment\PaymentOption;
 use Wajub\PrestaShop\Admin\AdminToken;
+use Wajub\PrestaShop\Admin\Notices;
 use Wajub\PrestaShop\Admin\OrderPanel;
 use Wajub\PrestaShop\Checkout\CheckoutStrings;
 use Wajub\PrestaShop\Checkout\PrestaShopCarts;
@@ -28,13 +28,12 @@ use Wajub\PrestaShop\Connection\KeyReminders;
 use Wajub\PrestaShop\Install\OrderStates;
 use Wajub\PrestaShop\Install\Schema;
 use Wajub\PrestaShop\Order\HeldConfirmations;
-use Wajub\PrestaShop\Payment\ChannelLabels;
 use Wajub\PrestaShop\Payment\LogoStrip;
 use Wajub\PrestaShop\Payment\Methods;
-use Wajub\PrestaShop\Payment\PaymentRecord;
 use Wajub\PrestaShop\Privacy\CustomerData;
 use Wajub\PrestaShop\Refund\PendingSlips;
 use Wajub\PrestaShop\Refund\RefundSync;
+use Wajub\PrestaShop\Refund\RefusedRefund;
 use Wajub\PrestaShop\Refund\SlipRequest;
 use Wajub\PrestaShop\Services;
 use Wajub\PrestaShop\Settings\Scope;
@@ -62,7 +61,7 @@ class Wajub extends PaymentModule
      * CHANGELOG.md and, for a version that changes the database or the
      * hooks, upgrade/upgrade-<version>.php.
      */
-    public const VERSION = '1.0.0';
+    public const VERSION = '1.0.1';
 
     /** The PHP version the module's code needs. */
     public const MIN_PHP_VERSION_ID = 80100;
@@ -79,12 +78,24 @@ class Wajub extends PaymentModule
      * - paymentOptions: Mobile Money, Card and Other payment methods at checkout;
      * - displayPaymentReturn: the order confirmation page, while a payment settles;
      * - displayOrderDetail: the customer's order page, to pay what is left;
-     * - actionFrontControllerSetMedia: the payment form's script and style, on the checkout only;
+     * - actionFrontControllerSetMedia: the payment form's script and style on
+     *   the checkout, the status panel's on the order confirmation page, the
+     *   checkout style on the customer's order page and, on every page while a
+     *   payment that could not count is due to be read again, the script that
+     *   asks the shop to read it (Order\Recounts);
      * - displayAdminOrderMain: the Wajub panel of the back office's order page;
-     * - actionAdminControllerSetMedia: that panel's script and style, on the order page only;
+     * - actionAdminControllerSetMedia: the order page's panel's script and
+     *   style; the style of the back office's notices and "Wajub · Sandbox",
+     *   and their Copy button's script, on a page that shows them; on every
+     *   page of the back office, while a payment that could not count is due
+     *   to be read again, the script that asks the shop to read it
+     *   (Order\Recounts);
      * - actionBeforeUpdateCancelProductFormHandler: a refund of the order page
      *   (Partial refund, Standard refund, Return products), refunded through
      *   Wajub before PrestaShop makes its credit slip, or refused;
+     * - actionObjectOrderSlipAddAfter: the credit slip of such a refund as
+     *   PrestaShop adds it, which records what Wajub refunded then, before
+     *   another module's hook can stop PrestaShop (Refund\PendingSlips);
      * - actionOrderSlipAdd: the credit slip made, which records those refunds,
      *   or one made another way, refunded through Wajub then;
      * - actionOrderStatusPostUpdate: an order paid (its confirmation e-mail, held
@@ -94,13 +105,21 @@ class Wajub extends PaymentModule
      * - actionCronJob: PrestaShop's Cron tasks manager runs the module's
      *   scheduled task (Order\Cleanup, Connection\KeyReminders) every hour,
      *   when it is installed;
-     * - displayAdminAfterHeader: on every page of the back office, a key that
-     *   expires within two weeks, or has (Connection\KeyReminders);
+     * - displayAdminAfterHeader: the back office's notices (adminNotices()):
+     *   the shop takes no payment, a key that expires within two weeks or
+     *   has (Connection\KeyReminders), a shop the public uses still in
+     *   Sandbox, Wajub to set up, or not offered at checkout, the scheduled
+     *   task that does not run;
      * - actionAdminControllerInitAfter: the same, on PrestaShop 9's legacy
      *   pages (the dashboard among them), drawn without displayAdminAfterHeader;
+     * - displayBackOfficeTop: "Wajub · Sandbox" in the header of every page of
+     *   the back office while the shop takes test payments;
      * - actionExportGDPRData, actionDeleteGDPRCustomer: PrestaShop's GDPR
      *   module exports, or erases, what the module keeps of a customer
-     *   (Privacy\CustomerData).
+     *   (Privacy\CustomerData);
+     * - actionModuleRegisterHookAfter: a module that hooks the refund forms
+     *   after the module was installed runs before it there all the same
+     *   (keepLastOnRefundForms()).
      */
     public const HOOKS = [
         'paymentOptions',
@@ -110,15 +129,21 @@ class Wajub extends PaymentModule
         'displayAdminOrderMain',
         'actionAdminControllerSetMedia',
         'actionBeforeUpdateCancelProductFormHandler',
+        'actionObjectOrderSlipAddAfter',
         'actionOrderSlipAdd',
         'actionOrderStatusPostUpdate',
         'actionEmailSendBefore',
         'actionCronJob',
         'displayAdminAfterHeader',
         'actionAdminControllerInitAfter',
+        'displayBackOfficeTop',
         'actionExportGDPRData',
         'actionDeleteGDPRCustomer',
+        'actionModuleRegisterHookAfter',
     ];
+
+    /** The hook of the order page's refund forms, where the module runs last (keepLastOnRefundForms()). */
+    public const REFUND_FORMS_HOOK = 'actionBeforeUpdateCancelProductFormHandler';
 
     /** The back office page of the module's settings (controllers/admin). */
     public const ADMIN_CONTROLLER = 'AdminWajubConfiguration';
@@ -141,8 +166,9 @@ class Wajub extends PaymentModule
     /**
      * The refunds of the order page's forms this request
      * (hookActionBeforeUpdateCancelProductFormHandler()), until the credit
-     * slip PrestaShop makes next records them (hookActionOrderSlipAdd()),
-     * or the end of the request does.
+     * slip PrestaShop makes next records them
+     * (hookActionObjectOrderSlipAddAfter(), hookActionOrderSlipAdd()), or
+     * the end of the request does.
      *
      * @var PendingSlips|null
      */
@@ -150,6 +176,14 @@ class Wajub extends PaymentModule
 
     /** @var Services|null */
     private $services;
+
+    /**
+     * The back office's notices of this request (adminNotices()), worked out
+     * once for the hooks that show them, their style and their script.
+     *
+     * @var array{notices: list<array<string, mixed>>, badge: bool}|null
+     */
+    private $adminNotices;
 
     /** @var array<string, Services> by the slug of their scope */
     private $servicesByScope = [];
@@ -162,8 +196,11 @@ class Wajub extends PaymentModule
         $this->author = 'Wajub';
         $this->need_instance = 0;
         $this->bootstrap = true;
-        $this->ps_versions_compliancy = ['min' => self::MIN_PS_VERSION, 'max' => _PS_VERSION_];
-        $this->controllers = ['webhook', 'prepare', 'validation', 'status', 'return', 'release', 'pay', 'cron'];
+        // Every PrestaShop 9, written out as PrestaShop Addons asks: never
+        // _PS_VERSION_, which would say the module runs on any version to
+        // come, and which its validator rejects (bin/lint-module.php checks).
+        $this->ps_versions_compliancy = ['min' => self::MIN_PS_VERSION, 'max' => '9.99.99'];
+        $this->controllers = ['webhook', 'prepare', 'validation', 'status', 'return', 'release', 'pay', 'cron', 'recount'];
         $this->currencies = true;
         $this->currencies_mode = 'checkbox';
         $this->tabs = [
@@ -185,7 +222,7 @@ class Wajub extends PaymentModule
 
         $this->displayName = $this->trans('Wajub', [], 'Modules.Wajub.Admin');
         $this->description = $this->trans('Accept Mobile Money, cards and other payment methods with Wajub.', [], 'Modules.Wajub.Admin');
-        $this->confirmUninstall = $this->trans('Uninstalling removes the Wajub settings and keys. Orders, their payments and the record of their Wajub payments stay. Continue?', [], 'Modules.Wajub.Admin');
+        $this->confirmUninstall = $this->trans('Uninstalling removes the Wajub settings, keys and signing secrets. It keeps your orders, their payments, and the record of their Wajub payments, refunds and notes (the tables wajub_payment, wajub_refund and wajub_order_note), which a new install finds again. Continue?', [], 'Modules.Wajub.Admin');
 
         if (PHP_VERSION_ID < self::MIN_PHP_VERSION_ID) {
             $this->warning = $this->phpVersionMessage();
@@ -241,6 +278,7 @@ class Wajub extends PaymentModule
 
             return false;
         }
+        $this->keepLastOnRefundForms();
 
         // For all shops, as a first install is: each shop, group or "All
         // shops" then changes what it needs from the module's page.
@@ -251,6 +289,9 @@ class Wajub extends PaymentModule
                 Configuration::updateGlobalValue($key, $value);
             }
         }
+        // The back office says so once the scheduled task has not run for
+        // a while from now (Admin\Notices).
+        $this->services()->taskLog()->watch(time());
 
         return true;
     }
@@ -261,9 +302,10 @@ class Wajub extends PaymentModule
      * each order's Wajub payments and refunds (Schema::KEPT), which is the
      * merchant's order history, and which PrestaShop's "Reset" (an
      * uninstall, then an install) would otherwise lose; and an order state
-     * an order went through, with its id (OrderStates::uninstall()). Never
-     * a key in Wajub: the keys "Connect with Wajub" created stay in the
-     * Wajub Dashboard, where the merchant deletes them.
+     * an order went through, with its id (OrderStates::uninstall()). The
+     * confirmation PrestaShop asks before says what is kept, tables named.
+     * Never a key in Wajub: the keys "Connect with Wajub" created stay in
+     * the Wajub Dashboard, where the merchant deletes them.
      */
     public function uninstall()
     {
@@ -280,6 +322,7 @@ class Wajub extends PaymentModule
             Configuration::deleteByName('CONF_WAJUB_' . $suffix);
         }
         $done = Schema::drop() && $done;
+        LogoStrip::forget(_PS_TMP_IMG_DIR_);
 
         return parent::uninstall() && $done;
     }
@@ -321,6 +364,23 @@ class Wajub extends PaymentModule
         }
 
         return (bool) Access::isGranted('ROLE_MOD_TAB_' . strtoupper(self::ADMIN_CONTROLLER) . '_READ', (int) $employee->id_profile);
+    }
+
+    /**
+     * Whether the employee's profile may change the module's settings: who
+     * is told what to fix, as the plugin tells those who can manage options.
+     * A profile that may only read them is not handed a notice it can do
+     * nothing about, nor the scheduled task's secret address.
+     *
+     * @param Employee|null $employee
+     */
+    public function settingsEditable($employee): bool
+    {
+        if (!$employee instanceof Employee) {
+            return false;
+        }
+
+        return (bool) Access::isGranted('ROLE_MOD_TAB_' . strtoupper(self::ADMIN_CONTROLLER) . '_UPDATE', (int) $employee->id_profile);
     }
 
     /**
@@ -426,6 +486,27 @@ class Wajub extends PaymentModule
     }
 
     /**
+     * Gives each webhook endpoint a scope of this PrestaShop registered the
+     * events of WebhookRegistration::EVENTS it lacks, for a version that
+     * listens to more (upgrade scripts). By scope slug, then environment:
+     * what WebhookRegistration::addMissingEvents() says.
+     *
+     * @return array<string, array<string, string>>
+     */
+    public function subscribeWebhookEvents(): array
+    {
+        $done = [];
+        foreach ($this->services()->settings()->webhookEndpointsEverywhere() as $slug) {
+            $services = $this->servicesOfSlug($slug);
+            if ($services !== null) {
+                $done[$slug] = $services->webhookRegistration()->addMissingEvents();
+            }
+        }
+
+        return $done;
+    }
+
+    /**
      * The e-mails of keys that expire within two weeks, or have, one per
      * key (Connection\KeyReminders). Returns how many went.
      */
@@ -453,6 +534,23 @@ class Wajub extends PaymentModule
         }, $shops, function (string $slug, Translator $t): string {
             return Shop::isFeatureActive() ? $this->scopeName($slug, $t) : '';
         });
+    }
+
+    /**
+     * The module's scheduled task, as the Cron tasks manager or the host's
+     * cron (controllers/front/cron.php) runs it: its run noted first, for
+     * the back office to say when it does not run (Order\TaskLog,
+     * Admin\Notices), then runCleanup() and runReminders().
+     *
+     * @return array{recounted: int, cancelled: list<int>, kept: list<int>, reminded: int}
+     */
+    public function runScheduledTask(): array
+    {
+        $this->services()->taskLog()->ran(time());
+        $done = $this->runCleanup();
+        $done['reminded'] = $this->runReminders();
+
+        return $done;
     }
 
     /**
@@ -509,7 +607,6 @@ class Wajub extends PaymentModule
         $environment = $services->environment();
         $validation = $this->context->link->getModuleLink($this->name, 'validation', [], true);
         $token = $services->tokens()->checkout((int) $cart->id, (int) $cart->id_customer);
-        $logos = $this->getLocalPath() . 'views/img/methods';
         $common = [
             'test_mode' => $environment->isSandbox(),
             'test_badge' => CheckoutStrings::testMode($services->translator()),
@@ -538,7 +635,7 @@ class Wajub extends PaymentModule
             $paymentOption->setModuleName($this->name)
                 ->setCallToActionText($option['title'])
                 ->setAdditionalInformation($this->fetch('module:wajub/views/templates/front/payment-info.tpl'));
-            $logo = LogoStrip::dataUri($option['logos'], $logos);
+            $logo = $this->logoUrl($option['logos']);
             if ($logo !== '') {
                 $paymentOption->setLogo($logo);
             }
@@ -555,6 +652,28 @@ class Wajub extends PaymentModule
         }
 
         return $paymentOptions;
+    }
+
+    /**
+     * The address of the picture of an option's logos (Payment\LogoStrip),
+     * written once in PrestaShop's folder of the pictures it makes (img/tmp);
+     * the first logo's own file, should that folder take no file.
+     *
+     * @param list<string> $keys
+     */
+    private function logoUrl(array $keys): string
+    {
+        $file = LogoStrip::file($keys, $this->getLocalPath() . 'views/img/methods', _PS_TMP_IMG_DIR_);
+        if ($file !== '') {
+            return $this->context->link->getMediaLink(_PS_TMP_IMG_ . basename($file));
+        }
+        foreach ($keys as $key) {
+            if (Methods::logoFile($key) !== '') {
+                return $this->context->link->getMediaLink($this->getPathUri() . 'views/img/methods/' . Methods::logoFile($key));
+            }
+        }
+
+        return '';
     }
 
     /**
@@ -584,27 +703,16 @@ class Wajub extends PaymentModule
         $records = $services->payments()->forOrder($view->id);
         $current = $records === [] ? null : $records[count($records) - 1];
 
-        $panel = '';
         $states = [$services->settings()->awaitingState(), $services->settings()->partialState(), (int) Configuration::get('PS_OS_ERROR')];
-        if (!$view->paid && in_array($view->stateId, $states, true) && $current !== null) {
-            $line = $services->statusAnswer()->payerLine($view, $current->environment);
-            $waiting = $line === '' || !$current->isCounted();
-            // A payment the payer may still approve on their phone: Mobile
-            // Money's form, or Wajub's page with Mobile Money or a method
-            // not known yet. Never a card's.
-            $phone = $current->method === Methods::MOBILE_MONEY
-                || ($current->mode === PaymentRecord::MODE_HOSTED && $current->method !== Methods::CARD && !ChannelLabels::isCard($current->channel));
-            $panel = $waiting ? 'waiting' : 'partial';
-            $this->context->smarty->assign('wajub_status', [
-                'panel' => $panel,
-                'phone' => $phone,
-                'paid_so_far' => $line,
+        $status = $services->statusAnswer()->confirmationPanel($view, $states);
+        $panel = $status['panel'];
+        if ($panel !== '') {
+            $this->context->smarty->assign('wajub_status', $status + [
                 'status_url' => $services->storefront()->status($view),
                 'release_url' => $services->storefront()->release($view),
                 // Where the payer pays what is left (the script offers it
                 // once the order is found part paid, the partial panel now).
                 'pay_url' => $services->storefront()->pay($view),
-                'can_pay' => !$waiting && $services->statusAnswer()->payable($view),
                 'token' => $services->storefront()->orderToken($view),
                 'timeout' => self::WAIT_SECONDS,
                 'order_id' => $view->id,
@@ -671,7 +779,9 @@ class Wajub extends PaymentModule
     /**
      * Wajub.js and the payment form's scripts on the checkout, when Mobile
      * Money or Card can take a payment there; the status panel's script on
-     * the order confirmation page. Nowhere else.
+     * the order confirmation page. On any page, while a payment that could
+     * not count is due to be read again, the script that asks the shop to
+     * read it (views/js/recount.js, which posts to controllers/front/recount.php).
      *
      * @param array<string, mixed> $params
      *
@@ -683,6 +793,10 @@ class Wajub extends PaymentModule
             return;
         }
         $controller = $this->context->controller;
+        if ($controller instanceof FrontController && $this->recountDue()) {
+            $controller->registerJavascript('wajub-recount', 'modules/' . $this->name . '/views/js/recount.js', ['position' => 'bottom', 'priority' => 300]);
+            Media::addJsDef(['wajubRecount' => ['url' => $this->recountUrl()]]);
+        }
         $page = $controller instanceof FrontController ? (string) $controller->php_self : '';
         if ($page !== 'order' && $page !== 'order-confirmation' && $page !== 'order-detail') {
             return;
@@ -765,18 +879,20 @@ class Wajub extends PaymentModule
             'can_check' => $canCheck,
             'ajax_url' => $canCheck ? $this->context->link->getAdminLink(self::ADMIN_CONTROLLER, true, [], ['ajax' => 1]) : '',
             'token' => $canCheck ? AdminToken::ofContext() : '',
-            // Linked from the panel itself: the order page is a Symfony page
-            // on PrestaShop 8 and 9, whose assets differ between them.
-            'css' => $this->getPathUri() . 'views/css/admin-order.css?v=' . $this->version,
-            'js' => $this->getPathUri() . 'views/js/admin-order.js?v=' . $this->version,
         ]);
 
         return $this->display(__FILE__, 'views/templates/hook/admin-order.tpl');
     }
 
     /**
-     * Nothing yet: the order page's Wajub panel links its own style and
-     * script (hookDisplayAdminOrderMain()).
+     * The back office's scripts and styles, through PrestaShop's own lists
+     * (in the page's head on PrestaShop 8 and 9, legacy and Symfony pages):
+     * on the orders' pages, those of the order page's Wajub panel
+     * (hookDisplayAdminOrderMain()); on a page that shows the module's
+     * notices or "Wajub · Sandbox", their style and the notices' Copy
+     * button; and, while a payment that could not count is due to be read
+     * again, the script that asks the shop to read it, as on the
+     * storefront's (hookActionFrontControllerSetMedia()).
      *
      * @param array<string, mixed> $params
      *
@@ -784,6 +900,74 @@ class Wajub extends PaymentModule
      */
     public function hookActionAdminControllerSetMedia($params)
     {
+        // A legacy page's AdminController, or, on PrestaShop 9's Symfony
+        // pages, the LegacyControllerContext that stands for it (which
+        // dispatches this hook from its head tag): both take scripts.
+        $controller = $this->context->controller;
+        if (!$this->active || PHP_VERSION_ID < self::MIN_PHP_VERSION_ID || $controller === null || $controller instanceof FrontController
+            || (isset($controller->ajax) && $controller->ajax)) {
+            return;
+        }
+        $base = $this->getPathUri() . 'views/';
+        $suffix = '?v=' . $this->version;
+        if ($this->adminPage() === 'AdminOrders') {
+            $controller->addCSS($base . 'css/admin-order.css' . $suffix);
+            $controller->addJS($base . 'js/admin-order.js' . $suffix);
+        }
+        $shown = $this->adminNotices();
+        if ($shown['notices'] !== [] || $shown['badge']) {
+            $controller->addCSS($base . 'css/admin-notices.css' . $suffix);
+            $controller->addJS($base . 'js/admin-notices.js' . $suffix);
+        }
+        if ($this->recountDue()) {
+            $controller->addJS($base . 'js/recount.js' . $suffix);
+            Media::addJsDef(['wajubRecount' => ['url' => $this->recountUrl()]]);
+        }
+    }
+
+    /**
+     * The back office page being drawn, by its controller ("AdminOrders",
+     * "AdminDashboard"…), which PrestaShop 8 gives its Symfony pages too,
+     * and PrestaShop 9 their LegacyControllerContext; '' when unknown.
+     */
+    private function adminPage(): string
+    {
+        $controller = $this->context->controller;
+
+        return is_object($controller) && isset($controller->controller_name) ? (string) $controller->controller_name : '';
+    }
+
+    /**
+     * Whether a payment that could not count is due to be read again
+     * (Order\Recounts): a setting PrestaShop has read already, no query.
+     */
+    private function recountDue(): bool
+    {
+        try {
+            return $this->services()->recounts(function (int $idShop): Services {
+                return $this->servicesFor($idShop);
+            })->due(time());
+        } catch (Throwable $e) {
+            return false;
+        }
+    }
+
+    /** Where the pages ask the shop to read again the payments due (controllers/front/recount.php). */
+    private function recountUrl(): string
+    {
+        return $this->context->link->getModuleLink($this->name, 'recount', [], true);
+    }
+
+    /**
+     * Reads again the payments that could not count and are due to be
+     * (Order\Recounts), each with the services of its own shop: how many
+     * count now. Nothing while none is due.
+     */
+    public function runRecounts(): int
+    {
+        return $this->services()->recounts(function (int $idShop): Services {
+            return $this->servicesFor($idShop);
+        })->run(time());
     }
 
     /**
@@ -797,46 +981,56 @@ class Wajub extends PaymentModule
      * own. A refund given as a voucher, with no credit slip, or of nothing
      * (an amount of 0 or less), gives no money back: nothing for Wajub.
      *
+     * The refusal goes to PrestaShop in the form's data (Refund\RefusedRefund),
+     * never as an exception of the hook, which PrestaShop 8 swallows once
+     * debug mode is off, and then makes the slip: on 8 as on 9, in debug
+     * mode or not, PrestaShop makes nothing and shows the module's message.
+     *
      * Every refund of the page posts the same form (`cancel_product`), whose
      * route says which refund it is (Refund\SlipRequest), read under the
      * order's lock, which the request keeps until its end once Wajub was
      * asked (Refund\PendingSlips): the same refund posted twice reads what
-     * the first refunded.
+     * the first refunded. A refund of any of the orders a cart that ships in
+     * several packages became is refunded from their payments, under their
+     * first order's lock.
      *
-     * @param array<string, mixed> $params
+     * @param array<string, mixed> $params ['id' => the order's id, 'form_data' => the form's data, by reference]
      *
      * @return void
-     *
-     * @throws ModuleErrorException the refund refused: PrestaShop shows its message, and makes no slip
      */
     public function hookActionBeforeUpdateCancelProductFormHandler($params)
     {
         if (PHP_VERSION_ID < self::MIN_PHP_VERSION_ID) {
             return;
         }
-        $idOrder = (int) ($params['id'] ?? 0);
+        $asked = (int) ($params['id'] ?? 0);
         $action = SlipRequest::action();
-        if ($idOrder <= 0 || $action === '') {
+        if ($asked <= 0 || $action === '' || !is_array($params['form_data'] ?? null) || RefusedRefund::in($params['form_data'])) {
             return;
         }
-        $order = new Order($idOrder);
+        $order = new Order($asked);
         if (!Validate::isLoadedObject($order)) {
             return;
         }
         $services = $this->servicesFor((int) $order->id_shop);
+        $t = $services->translator();
+        // The orders a cart became go by the first's id: their payments, their lock.
+        $idOrder = $services->orders()->leadId($asked);
         if ($order->module !== $this->name && $services->payments()->forOrder($idOrder) === []) {
             return;
         }
 
         $pending = $this->pendingSlips();
         if (!$pending->lock($idOrder, $services, 10)) {
-            throw new ModuleErrorException($services->translator()->trans('The order is being updated. Try again in a moment.', [], 'Modules.Wajub.Admin'));
+            $this->refuseRefund($params, $pending, $idOrder, $t->trans('The order is being updated. Try again in a moment.', [], 'Modules.Wajub.Admin'));
+
+            return;
         }
         try {
             // Read under the lock: what an earlier request refunded of the
             // same order is written by now.
-            $order = new Order($idOrder);
-            $request = SlipRequest::of($action, $order, is_array($params['form_data'] ?? null) ? $params['form_data'] : []);
+            $order = new Order($asked);
+            $request = SlipRequest::of($action, $order, $params['form_data']);
             $view = $services->orders()->find($idOrder);
             if ($request === null || $view === null) {
                 // PrestaShop refuses it itself, and says why.
@@ -855,14 +1049,20 @@ class Wajub extends PaymentModule
                 $services->refundSync()->recordParts($view, $answer['keys']);
             }
         } catch (Throwable $e) {
+            // What Wajub made of it is not known: no slip, rather than one
+            // a second request might refund again. A part Wajub made is
+            // recorded once its webhook says so.
             $pending->unlock($idOrder);
+            $services->logger()->error('A refund of the order page could not be made through Wajub', ['order' => $asked, 'error' => $e->getMessage()]);
+            $this->refuseRefund($params, $pending, $idOrder, $t->trans('The refund could not be made through Wajub, and no credit slip was made. Try again in a moment. Should Wajub have refunded part of it meanwhile, that part is recorded on the order as a credit slip once Wajub confirms it.', [], 'Modules.Wajub.Admin'));
 
-            throw $e;
+            return;
         }
         if (in_array($answer['status'], [RefundSync::REFUSED, RefundSync::PARTIAL], true)) {
             $pending->unlock($idOrder);
+            $this->refuseRefund($params, $pending, $idOrder, $answer['message']);
 
-            throw new ModuleErrorException($answer['message']);
+            return;
         }
         $pending->expect($idOrder, $services, $answer['keys']);
         if ($answer['keys'] === []) {
@@ -872,12 +1072,121 @@ class Wajub extends PaymentModule
     }
 
     /**
+     * PrestaShop makes no slip of the form's refund, and shows `$message`
+     * (Refund\RefusedRefund); a slip it would make all the same is never
+     * refunded through Wajub (hookActionOrderSlipAdd()).
+     *
+     * @param array<string, mixed> $params the hook's
+     */
+    private function refuseRefund(array &$params, PendingSlips $pending, int $idOrder, string $message): void
+    {
+        $pending->refuse($idOrder, $message);
+        RefusedRefund::refuse($params, $message);
+    }
+
+    /**
+     * Puts the module last, in every shop, among the modules on the order
+     * page's refund forms' hook (REFUND_FORMS_HOOK), as it is once installed
+     * after them. There it refunds through Wajub once every other module has
+     * had its say (one that refuses the refund refuses it before Wajub gives
+     * any money back), and the refusal it hands PrestaShop in the form's
+     * data (Refund\RefusedRefund) reaches PrestaShop's handler alone: a
+     * module that ran after it would find, instead of the products to
+     * refund, an object that throws, or that its array functions refuse (a
+     * PHP error, a blank page instead of the module's message).
+     */
+    public function keepLastOnRefundForms(): void
+    {
+        $idHook = (int) Hook::getIdByName(self::REFUND_FORMS_HOOK);
+        if ($idHook <= 0 || (int) $this->id <= 0) {
+            return;
+        }
+        $db = Db::getInstance();
+        $table = '`' . _DB_PREFIX_ . 'hook_module`';
+        $rows = $db->executeS('SELECT `id_shop`, `position` FROM ' . $table . ' WHERE `id_hook` = ' . $idHook . ' AND `id_module` = ' . (int) $this->id, true, false);
+        foreach (is_array($rows) ? $rows : [] as $row) {
+            $shop = (int) $row['id_shop'];
+            $mine = (int) $row['position'];
+            $last = (int) $db->getValue('SELECT MAX(`position`) FROM ' . $table . ' WHERE `id_hook` = ' . $idHook . ' AND `id_shop` = ' . $shop, false);
+            if ($mine >= $last) {
+                continue;
+            }
+            // As Module::updatePosition() moves a module to a position.
+            $db->execute('UPDATE ' . $table . ' SET `position` = `position` - 1 WHERE `id_hook` = ' . $idHook . ' AND `id_shop` = ' . $shop . ' AND `position` > ' . $mine, false);
+            $db->execute('UPDATE ' . $table . ' SET `position` = ' . $last . ' WHERE `id_hook` = ' . $idHook . ' AND `id_shop` = ' . $shop . ' AND `id_module` = ' . (int) $this->id, false);
+        }
+    }
+
+    /**
+     * Another module hooks the order page's refund forms: the module goes
+     * back to the last place there (keepLastOnRefundForms()).
+     *
+     * @param array<string, mixed> $params ['object' => the module, 'hook_name' => the hook]
+     *
+     * @return void
+     */
+    public function hookActionModuleRegisterHookAfter($params)
+    {
+        $module = $params['object'] ?? null;
+        if (PHP_VERSION_ID < self::MIN_PHP_VERSION_ID || strcasecmp((string) ($params['hook_name'] ?? ''), self::REFUND_FORMS_HOOK) !== 0
+            || ($module instanceof Module && $module->name === $this->name)) {
+            return;
+        }
+        try {
+            $this->keepLastOnRefundForms();
+        } catch (Throwable $e) {
+            PrestaShopLogger::addLog('Wajub: the module could not be put last on the refund forms\' hook: ' . $e->getMessage(), 2, null, 'Wajub', 0, true);
+        }
+    }
+
+    /**
+     * PrestaShop adds a credit slip (ObjectModel::add(), before any module
+     * hears it made one): the slip of the order page's refund whose money
+     * Wajub gave back this request records it now
+     * (Refund\PendingSlips::slipAdded()). Another module's actionOrderSlipAdd
+     * that fails with a PHP error ends the request before the module's own
+     * hook, and before any end of request: the refund is on its slip by
+     * then, with a note for the merchant to check what PrestaShop did not
+     * write. Nothing for any other slip, nor in a request that sent no
+     * refund form.
+     *
+     * @param array<string, mixed> $params ['object' => the slip]
+     *
+     * @return void
+     */
+    public function hookActionObjectOrderSlipAddAfter($params)
+    {
+        $slip = $params['object'] ?? null;
+        if (PHP_VERSION_ID < self::MIN_PHP_VERSION_ID || $this->pendingSlips === null || !$slip instanceof OrderSlip || (int) $slip->id <= 0) {
+            return;
+        }
+        $order = new Order((int) $slip->id_order);
+        if (!Validate::isLoadedObject($order)) {
+            return;
+        }
+        $services = $this->servicesFor((int) $order->id_shop);
+        try {
+            // Under the first of the orders its cart became, as the form's refund.
+            $this->pendingSlips->slipAdded($services->orders()->leadId((int) $order->id), (int) $slip->id);
+        } catch (Throwable $e) {
+            // The slip is being saved: nothing here may stop PrestaShop.
+            // actionOrderSlipAdd, or the end of the request, records it then.
+            $services->logger()->error('A credit slip could not record the refund Wajub made for it as PrestaShop added it', ['order' => (int) $order->id, 'slip' => (int) $slip->id, 'error' => $e->getMessage()]);
+        }
+    }
+
+    /**
      * A credit slip made: the refunds Wajub made for it before
-     * (hookActionBeforeUpdateCancelProductFormHandler()) are recorded as
-     * this slip's (Refund\PendingSlips). One made another way (a module, PrestaShop's API) is
-     * refunded through Wajub now, as PrestaShop's payment modules refund a
-     * slip; the slip is made already, so what Wajub refuses is noted for the
-     * merchant, never a failure of the slip.
+     * (hookActionBeforeUpdateCancelProductFormHandler()) are this slip's
+     * since PrestaShop added it (hookActionObjectOrderSlipAddAfter()), and
+     * PrestaShop went on with the refund: the note that it may have stopped
+     * there is taken back (Refund\PendingSlips). One made another way (a
+     * module, PrestaShop's API) is refunded through Wajub now, as
+     * PrestaShop's payment modules refund a slip; the slip is made already,
+     * so what Wajub refuses is noted for the merchant, never a failure of
+     * the slip. One of a refund Wajub refused this request, which PrestaShop
+     * should never have made, is noted, never refunded: Wajub may have
+     * refunded part of it on a slip of its own already.
      *
      * @param array<string, mixed> $params
      *
@@ -889,13 +1198,14 @@ class Wajub extends PaymentModule
         if (PHP_VERSION_ID < self::MIN_PHP_VERSION_ID || !$order instanceof Order || !Validate::isLoadedObject($order)) {
             return;
         }
-        $idOrder = (int) $order->id;
         $services = $this->servicesFor((int) $order->id_shop);
         try {
-            $view = $services->orders()->find($idOrder);
+            // The slip's order, as one with the other orders its cart became.
+            $view = $services->orders()->find((int) $order->id);
             if ($view === null) {
                 return;
             }
+            $idOrder = $view->id;
             // PrestaShop 9 hands the slip; PrestaShop 8 has just added it.
             $slip = $params['orderSlipCreated'] ?? null;
             $idSlip = $slip instanceof OrderSlip ? (int) $slip->id : $services->orders()->lastSlip($view);
@@ -904,15 +1214,19 @@ class Wajub extends PaymentModule
 
                 return;
             }
+            if ($this->pendingSlips !== null && $this->pendingSlips->refused($idOrder) !== '') {
+                $services->refundSync()->noteRefusedSlip($view, $idSlip, $this->pendingSlips->refused($idOrder));
+
+                return;
+            }
             if ($order->module !== $this->name && $services->payments()->forOrder($idOrder) === []) {
                 return;
             }
-            $slip = $slip instanceof OrderSlip ? $slip : new OrderSlip($idSlip);
-            if (!Validate::isLoadedObject($slip)) {
-                return;
-            }
-            // A slip of products refunds their prices; one of an amount alone, that amount.
-            $amount = ((float) $slip->total_products_tax_incl > 0 ? (float) $slip->total_products_tax_incl : (float) $slip->amount) + (float) $slip->total_shipping_tax_incl;
+            // What the slip gives back, as PrestaShop computed the refund
+            // (the order's vouchers taken off when the merchant chose so):
+            // a slip of products, their prices; one of an amount alone, that
+            // amount.
+            $amount = $idSlip > 0 ? $services->orders()->slipGivesBack($idSlip) : 0.0;
             if ($amount <= 0) {
                 return;
             }
@@ -934,7 +1248,7 @@ class Wajub extends PaymentModule
             }
         } catch (Throwable $e) {
             // The slip is made: nothing here may break what PrestaShop does next.
-            $services->logger()->error('A credit slip could not be refunded through Wajub', ['order' => $idOrder, 'error' => $e->getMessage()]);
+            $services->logger()->error('A credit slip could not be refunded through Wajub', ['order' => (int) $order->id, 'error' => $e->getMessage()]);
         }
     }
 
@@ -1000,8 +1314,7 @@ class Wajub extends PaymentModule
             return;
         }
         try {
-            $this->runCleanup();
-            $this->runReminders();
+            $this->runScheduledTask();
         } catch (Throwable $e) {
             PrestaShopLogger::addLog('Wajub: the scheduled task failed: ' . $e->getMessage(), 3, null, 'Wajub', 0, true);
         }
@@ -1021,12 +1334,10 @@ class Wajub extends PaymentModule
 
     /**
      * On every page of the back office, for an employee who may open the
-     * module's settings: each key "Connect with Wajub" created that a shop
-     * pays with and that expires within two weeks, or has, with the link
-     * that connects again (keyNotices(), as the WordPress plugin's notices).
-     * The module's own settings page shows them itself, and PrestaShop 9's
-     * legacy pages, drawn without this hook, among their warnings
-     * (hookActionAdminControllerInitAfter()).
+     * module's settings: the module's notices (adminNotices()), as the
+     * WordPress plugin's. The module's own settings page shows them itself,
+     * and PrestaShop 9's legacy pages, drawn without this hook, among their
+     * warnings (hookActionAdminControllerInitAfter()).
      *
      * @param array<string, mixed> $params
      *
@@ -1034,25 +1345,25 @@ class Wajub extends PaymentModule
      */
     public function hookDisplayAdminAfterHeader($params)
     {
-        $controller = $this->context->controller;
-        if ($controller instanceof AdminController && $controller->controller_name === self::ADMIN_CONTROLLER) {
+        if ($this->adminPage() === self::ADMIN_CONTROLLER) {
             return '';
         }
-        $notices = $this->keyNotices();
+        $notices = $this->adminNotices()['notices'];
         if ($notices === []) {
             return '';
         }
-        $this->context->smarty->assign('wajub_key_notices', $notices);
+        $this->context->smarty->assign('wajub_notices', $notices);
 
-        return $this->display(__FILE__, 'views/templates/hook/admin-key-notice.tpl');
+        return $this->display(__FILE__, 'views/templates/hook/admin-notices.tpl');
     }
 
     /**
      * PrestaShop 9 draws its legacy pages (the dashboard, carriers, cart
      * rules, statistics…) with a layout that has no displayAdminAfterHeader:
-     * there, the notices of keys that expire go with the page's own warnings,
-     * which it shows at the top of its content. PrestaShop 8 draws the hook
-     * on every page, and its Symfony pages run no legacy controller.
+     * there, the module's notices go with the page's own warnings (and its
+     * information, for a notice that only informs), which it shows at the
+     * top of its content. PrestaShop 8 draws the hook on every page, and its
+     * Symfony pages run no legacy controller.
      *
      * @param array<string, mixed> $params ['controller' => the page's AdminController]
      *
@@ -1069,15 +1380,155 @@ class Wajub extends PaymentModule
         ) {
             return;
         }
-        foreach ($this->keyNotices() as $notice) {
-            $this->context->smarty->assign('wajub_key_notice', $notice);
-            $controller->warnings[] = $this->display(__FILE__, 'views/templates/hook/admin-key-warning.tpl');
+        foreach ($this->adminNotices()['notices'] as $notice) {
+            $this->context->smarty->assign('wajub_notice', $notice);
+            $body = $this->display(__FILE__, 'views/templates/hook/admin-notice.tpl');
+            if ($notice['type'] === 'info') {
+                $controller->informations[] = $body;
+            } else {
+                $controller->warnings[] = $body;
+            }
         }
     }
 
     /**
+     * "Wajub · Sandbox" in the header of every page of the back office
+     * (legacy and Symfony pages, PrestaShop 8 and 9) while the shop takes
+     * test payments, for an employee who may open the module's settings, as
+     * the plugin's toolbar says it: a merchant trying their own checkout
+     * sees whether it takes real money. Live, the normal state, shows
+     * nothing. It opens the settings, where Live is chosen.
+     *
+     * @param array<string, mixed> $params
+     *
+     * @return string
+     */
+    public function hookDisplayBackOfficeTop($params)
+    {
+        if (!$this->adminNotices()['badge']) {
+            return '';
+        }
+        $this->context->smarty->assign('wajub_badge', [
+            'url' => $this->context->link->getAdminLink(self::ADMIN_CONTROLLER, true, [], ['wajub_tab' => 'connection']),
+        ]);
+
+        return $this->display(__FILE__, 'views/templates/hook/admin-badge.tpl');
+    }
+
+    /**
+     * The back office's notices on this page, for this employee, most
+     * serious first, and whether "Wajub · Sandbox" shows: worked out once a
+     * request, from what is saved (never from Wajub). The notices for an
+     * employee who may change the module's settings, the badge for one who
+     * may open them, and nothing for anyone else, nor in a page drawn small
+     * inside another (`liteDisplaying`: the forms Orders > Add new order
+     * opens in a frame). The shop that takes no payment, the keys "Connect
+     * with Wajub" created that expire (keyNotices()), and those of
+     * Admin\Notices, with the links that fix them, in the scope the back
+     * office's shop selector is on.
+     *
+     * @return array{notices: list<array<string, mixed>>, badge: bool}
+     */
+    public function adminNotices(): array
+    {
+        if ($this->adminNotices !== null) {
+            return $this->adminNotices;
+        }
+        $this->adminNotices = ['notices' => [], 'badge' => false];
+        $employee = $this->context->employee;
+        if (!$this->active || PHP_VERSION_ID < self::MIN_PHP_VERSION_ID || !$employee instanceof Employee || !$this->settingsPageAllowed($employee) || Tools::getIsset('liteDisplaying')) {
+            return $this->adminNotices;
+        }
+        if (!$this->settingsEditable($employee)) {
+            try {
+                $this->adminNotices['badge'] = (new Notices($this->services()))->sandboxBadge();
+            } catch (Throwable $e) {
+                // A badge is never worth a broken back office.
+            }
+
+            return $this->adminNotices;
+        }
+
+        try {
+            $services = $this->services();
+            $t = $services->translator();
+            $notices = new Notices($services);
+            $page = $this->adminPage();
+            $due = $notices->due($page, (int) $employee->id, static function (): bool {
+                return Module::isInstalled('cronjobs') && Module::isEnabled('cronjobs');
+            }, time());
+
+            $links = [
+                'connection' => $this->context->link->getAdminLink(self::ADMIN_CONTROLLER, true, [], ['wajub_tab' => 'connection']),
+                'methods' => $this->context->link->getAdminLink(self::ADMIN_CONTROLLER, true, [], ['wajub_tab' => 'methods']),
+                'preferences' => $this->context->link->getAdminLink('AdminPaymentPreferences'),
+            ];
+            $shown = [];
+            foreach ($due as $notice) {
+                $shown[] = [
+                    'id' => $notice['id'],
+                    'type' => $notice['type'],
+                    'key' => false,
+                    'title' => $notice['title'],
+                    'scope' => '',
+                    'text' => $notice['text'],
+                    'links' => isset($links[$notice['action']]) ? [['url' => $links[$notice['action']], 'label' => $notice['label']]] : [],
+                    'hide_url' => $notice['hideable'] ? $this->context->link->getAdminLink(self::ADMIN_CONTROLLER, true, [], ['wajub_hide' => $notice['id'], 'wajub_token' => AdminToken::ofContext()]) : '',
+                    'copy' => $notice['copy'],
+                ];
+            }
+            foreach ($this->keyNotices() as $key) {
+                $shown[] = [
+                    'id' => $key['expired'] ? 'key_expired' : 'key_expiring',
+                    'type' => $key['expired'] ? 'error' : 'warning',
+                    'key' => true,
+                    'title' => $key['expired'] ? $t->trans('Your Wajub key has expired.', [], 'Modules.Wajub.Admin') : $t->trans('Your Wajub key expires soon.', [], 'Modules.Wajub.Admin'),
+                    'scope' => $key['scope'],
+                    'text' => $key['text'],
+                    'links' => [['url' => $key['url'], 'label' => $t->trans('Connect with Wajub again', [], 'Modules.Wajub.Admin')]],
+                    'hide_url' => '',
+                    'copy' => '',
+                ];
+            }
+            // Most serious first, as the plugin: the shop takes no payment,
+            // a key that has expired, then the rest in their order, a key
+            // that expires soon after a shop the public uses in Sandbox.
+            $rank = ['no_payments' => 0, 'key_expired' => 1, 'sandbox_live_shop' => 2, 'key_expiring' => 3];
+            $order = array_keys($shown);
+            usort($order, static function (int $a, int $b) use ($shown, $rank): int {
+                return [$rank[$shown[$a]['id']] ?? 4, $a] <=> [$rank[$shown[$b]['id']] ?? 4, $b];
+            });
+            $this->adminNotices = [
+                'notices' => array_map(static function (int $index) use ($shown): array {
+                    return $shown[$index];
+                }, $order),
+                'badge' => $notices->sandboxBadge(),
+            ];
+        } catch (Throwable $e) {
+            // A notice is never worth a broken back office.
+            $this->adminNotices = ['notices' => [], 'badge' => false];
+        }
+
+        return $this->adminNotices;
+    }
+
+    /**
+     * Hides one of the back office's notices from the context's employee
+     * for a week (Admin\Notices::hide()): false for one that cannot be.
+     */
+    public function hideAdminNotice(string $id): bool
+    {
+        $employee = $this->context->employee;
+        if (!$employee instanceof Employee) {
+            return false;
+        }
+
+        return (new Notices($this->services()))->hide((int) $employee->id, $id, time());
+    }
+
+    /**
      * The notices of keys that expire within two weeks, or have, that a shop
-     * pays with (Connection\KeyReminders), for an employee who may open the
+     * pays with (Connection\KeyReminders), for an employee who may change the
      * module's settings, and, in a multistore, works on such a shop: empty
      * for anyone else. The e-mail of each key goes from here too, for a shop
      * whose scheduled task does not run: once a key, whichever page sends
@@ -1087,7 +1538,7 @@ class Wajub extends PaymentModule
      */
     public function keyNotices(): array
     {
-        if (!$this->active || PHP_VERSION_ID < self::MIN_PHP_VERSION_ID || !$this->settingsPageAllowed($this->context->employee)) {
+        if (!$this->active || PHP_VERSION_ID < self::MIN_PHP_VERSION_ID || !$this->settingsEditable($this->context->employee)) {
             return [];
         }
 
@@ -1262,16 +1713,30 @@ class Wajub extends PaymentModule
 
     /**
      * The refunds of the order page's forms of this request, finished at its
-     * end (PendingSlips::finish()).
+     * end (finishRefundForms()).
      */
     private function pendingSlips(): PendingSlips
     {
         if ($this->pendingSlips === null) {
             $this->pendingSlips = new PendingSlips();
-            register_shutdown_function([$this->pendingSlips, 'finish']);
         }
 
         return $this->pendingSlips;
+    }
+
+    /**
+     * The end of a request of the back office (Symfony's kernel.terminate,
+     * Refund\RefundFormsEnd, once the answer is sent): the refunds of the
+     * order page's forms that no credit slip of PrestaShop's records are
+     * recorded, and the orders' locks let go (PendingSlips::finish()), with
+     * whether the request answered without an error (`$answered`). Nothing
+     * when no refund form was sent.
+     */
+    public function finishRefundForms(bool $answered = true): void
+    {
+        if ($this->pendingSlips !== null) {
+            $this->pendingSlips->finish($answered);
+        }
     }
 
     private function phpVersionMessage(): string

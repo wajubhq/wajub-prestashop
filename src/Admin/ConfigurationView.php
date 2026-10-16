@@ -106,6 +106,11 @@ final class ConfigurationView
             'cancel_after' => $settings->cancelAfter(),
             'cancel_after_max' => Settings::CANCEL_AFTER_MAX,
             'cron_url' => $this->services->shop()->cronUrl($this->services->tokens()->cron()),
+            'task_last_run' => $this->taskLastRun(),
+            // In Live, or on a shop the public uses, before it goes live.
+            'plain_http' => $this->plainHttp(false),
+            // Said when Live is chosen, whatever the shop uses now.
+            'plain_http_if_live' => $this->plainHttp(true),
             'form_theme' => $settings->formTheme(),
             'secured_line' => $settings->securedLine(),
             'webhook' => $this->webhook($scopeNames, $sources, $namesInText),
@@ -113,6 +118,46 @@ final class ConfigurationView
             // Each field says its language only when there are several.
             'multilingual' => count($languages) > 1,
         ];
+    }
+
+    /**
+     * Why Mobile Money and Card cannot bring payers back to this shop, or ''
+     * (the plugin's Setup::plainHttpProblem()): Wajub returns payers to
+     * HTTPS addresses only in Live (Checkout\PreparedPayments::callback()),
+     * so a payer whose bank's 3-D Secure page, or whose operator's page,
+     * takes the whole tab stays on Wajub's confirmation, and comes back to
+     * the shop by hand. Said in Live, and on a shop the public uses (debug
+     * mode off) still in Sandbox, before it goes live; `$ifLive`: whatever
+     * the shop uses now, for the confirmation of the switch to Live.
+     */
+    public function plainHttp(bool $ifLive): string
+    {
+        $environment = $this->services->environment();
+        if (!$this->services->offer()->separateOn() || $this->services->shop()->returnsOverHttps()) {
+            return '';
+        }
+        if (!$ifLive && !$environment->isLive() && !$this->services->shop()->isProduction()) {
+            return '';
+        }
+
+        $t = $this->services->translator();
+
+        // What to turn on, as this PrestaShop names it: PrestaShop 9 has no
+        // "SSL on all pages" any more.
+        return $this->services->shop()->hasSslOnAllPages()
+            ? $t->trans('This shop is not served over HTTPS, so in Live, Wajub cannot bring payers back to it: with Mobile Money or Card, a payer sent to their bank’s or operator’s page stays there. In Shop Parameters > General, enable SSL, and SSL on all pages, before you take real payments with them.', [], 'Modules.Wajub.Admin')
+            : $t->trans('This shop is not served over HTTPS, so in Live, Wajub cannot bring payers back to it: with Mobile Money or Card, a payer sent to their bank’s or operator’s page stays there. In Shop Parameters > General, enable SSL before you take real payments with them.', [], 'Modules.Wajub.Admin');
+    }
+
+    /** When the scheduled task last ran, in words: what the Payment methods tab says under its address. */
+    private function taskLastRun(): string
+    {
+        $t = $this->services->translator();
+        $last = $this->services->taskLog()->lastRun();
+
+        return $last > 0
+            ? $t->trans('Last run: %time% ago.', ['%time%' => Ago::since($last, $t)], 'Modules.Wajub.Admin')
+            : $t->trans('It has not run yet.', [], 'Modules.Wajub.Admin');
     }
 
     /**
@@ -311,6 +356,10 @@ final class ConfigurationView
             ] : null,
             'unverified' => $health['unverified'] !== null ? WebhookHealth::unverifiedNote($health['unverified'], $t) : '',
             'events' => implode(', ', WebhookRegistration::EVENTS),
+            // A local address: Wajub cannot reach it, and the Wajub Dashboard
+            // takes no endpoint at it. Its deliveries come by the Wajub CLI.
+            'local' => WebhookRegistration::localAddressProblem($url, Settings::SANDBOX) === 'private_url',
+            'listen_command' => WebhookRegistration::listenCommand($url),
             'inherited_from' => $inherited ? $this->scopeName($secretFrom, $scopeNames) : '',
             'inherited_in_text' => $inherited ? ($namesInText[$secretFrom] ?? $this->scopeName($secretFrom, $scopeNames)) : '',
         ];

@@ -102,6 +102,31 @@ final class DbPaymentStore implements PaymentStore
         return $records;
     }
 
+    public function uncountedWith(string $key, int $limit): array
+    {
+        if ($limit <= 0 || $key === '') {
+            return [];
+        }
+        // As save() writes the metadata: {"key":"value",…}, a blank value "".
+        $field = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], (string) json_encode($key, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT)) . ':"';
+        $rows = \Db::getInstance()->executeS(
+            'SELECT * FROM `' . $this->table() . '` WHERE `state` = \'' . PaymentRecord::UNCOUNTED . '\' AND `id_order` > 0'
+            . ' AND `metadata` LIKE \'%' . pSQL($field) . '%\' AND `metadata` NOT LIKE \'%' . pSQL($field) . '"%\''
+            . ' ORDER BY `date_upd` ASC, `id_wajub_payment` ASC LIMIT ' . (int) $limit,
+            true,
+            false
+        );
+
+        $records = [];
+        foreach (is_array($rows) ? $rows : [] as $row) {
+            if (is_array($row)) {
+                $records[] = self::record($row);
+            }
+        }
+
+        return $records;
+    }
+
     public function ordersWithOpenPayments(array $idShops, int $limit): array
     {
         $idShops = array_values(array_filter(array_map('intval', $idShops), static function (int $id): bool {

@@ -54,6 +54,16 @@ interface PaymentStore
     public function uncounted(int $limit, array $skip = []): array;
 
     /**
+     * Those of them that hold `$key` in their metadata, not blank, the
+     * longest unread first, at most `$limit`: the payments due to be read
+     * again (Order\Recounts::DUE), whatever the payments whose reads ran
+     * out, left to the scheduled task, add up to.
+     *
+     * @return list<PaymentRecord>
+     */
+    public function uncountedWith(string $key, int $limit): array;
+
+    /**
      * The orders of these shops that hold a payment Wajub may still take or
      * hold money for (`active`, or `uncounted`: it went through without
      * counting yet), at most `$limit`, oldest first: what a shop that is to

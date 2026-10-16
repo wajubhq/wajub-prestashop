@@ -11,11 +11,9 @@ declare(strict_types=1);
 
 namespace Wajub\PrestaShop\Order;
 
-use Wajub\PrestaShop\Payment\PaymentRecord;
 use Wajub\PrestaShop\Payment\PaymentStore;
 use Wajub\PrestaShop\Services;
 use Wajub\PrestaShop\Storage\StateStore;
-use Wajub\PrestaShop\Support\Lock;
 use Wajub\PrestaShop\Support\Logger;
 
 if (!defined('_PS_VERSION_')) {
@@ -32,8 +30,9 @@ if (!defined('_PS_VERSION_')) {
  *
  * 1. The payments that went through but could not count yet, their refunds
  *    unread (a webhook or a payer's return met Wajub not answering): read
- *    again, and counted if they can be now (Order\OpenPayments). One still
- *    unread is pointed out to the merchant, once; one that went through once
+ *    again, and counted if they can be now (Order\Recounts, which also
+ *    reads each a few minutes after it could not count). One still unread
+ *    is pointed out to the merchant, once; one that went through once
  *    another paid its order charged the payer twice, and the merchant is
  *    told.
  * 2. The orders still "Awaiting Wajub payment" the configured delay after
@@ -55,6 +54,12 @@ if (!defined('_PS_VERSION_')) {
  * first; an order kept is looked at again an hour later at the soonest, so
  * the next ones get their turn. Each order under its lock, with the
  * services of its own shop: its key, its environment, its delay.
+ *
+ * One run at a time, by a lease in the module's state (StateStore::add()),
+ * never a database lock: the run takes each order's lock in turn, and
+ * MySQL 5.6 lets a request hold one named lock only (Support\DbLock). A
+ * run that dies leaves its lease to lapse after RUN_FOR; one that outlasts
+ * it lets the next run keep the lease it took meanwhile.
  */
 final class Cleanup
 {
@@ -70,6 +75,11 @@ final class Cleanup
     /** Where the orders kept are listed, with when they may be looked at again. */
     private const KEPT = 'cleanup_kept';
 
+    /** The run's lease, and how long it lasts should its request die. */
+    private const RUN = 'cleanup_run';
+
+    private const RUN_FOR = 900;
+
     /** @var callable(int): Services */
     private $servicesFor;
 
@@ -82,8 +92,8 @@ final class Cleanup
     /** @var StateStore */
     private $state;
 
-    /** @var Lock */
-    private $lock;
+    /** @var Recounts */
+    private $recounts;
 
     /** @var Logger */
     private $logger;
@@ -94,13 +104,13 @@ final class Cleanup
     /**
      * @param callable(int): Services $servicesFor the services of a shop (Wajub::servicesFor())
      */
-    public function __construct(callable $servicesFor, ShopOrders $orders, PaymentStore $payments, StateStore $state, Lock $lock, Logger $logger, int $awaitingState)
+    public function __construct(callable $servicesFor, ShopOrders $orders, PaymentStore $payments, StateStore $state, Recounts $recounts, Logger $logger, int $awaitingState)
     {
         $this->servicesFor = $servicesFor;
         $this->orders = $orders;
         $this->payments = $payments;
         $this->state = $state;
-        $this->lock = $lock;
+        $this->recounts = $recounts;
         $this->logger = $logger;
         $this->awaitingState = $awaitingState;
     }
@@ -115,7 +125,8 @@ final class Cleanup
         $now = $now ?? time();
         $done = ['recounted' => 0, 'cancelled' => [], 'kept' => []];
         // One run at a time: two would read the same payments.
-        if (!$this->lock->acquire('cleanup', 0)) {
+        $lease = bin2hex(random_bytes(8));
+        if (!$this->state->add(self::RUN, $lease, self::RUN_FOR)) {
             return $done;
         }
         try {
@@ -126,21 +137,23 @@ final class Cleanup
                     continue;
                 }
                 $kept[$record->idOrder] = $now + self::KEEP_FOR;
-                if ($this->recount($record)) {
+                if ($this->recounts->recount($record, $now)) {
                     ++$done['recounted'];
                     unset($kept[$record->idOrder]);
                 }
             }
 
             $looked = 0;
-            foreach ($this->orders->inState($this->awaitingState, self::ORDERS_PER_RUN * 3, array_keys($kept)) as $idOrder => $placed) {
+            foreach ($this->orders->inState($this->awaitingState, self::ORDERS_PER_RUN * 3, array_keys($kept)) as $asked => $placed) {
                 if ($looked >= self::ORDERS_PER_RUN) {
                     break;
                 }
-                $order = $this->orders->find($idOrder);
-                if ($order === null) {
+                // The orders one cart became are one: looked at once, by the first's id.
+                $order = $this->orders->find($asked);
+                if ($order === null || isset($kept[$order->id]) || in_array($order->id, $done['cancelled'], true)) {
                     continue;
                 }
+                $idOrder = $order->id;
                 $services = ($this->servicesFor)($order->idShop);
                 $minutes = $services->settings()->cancelAfter();
                 if ($minutes <= 0) {
@@ -162,47 +175,17 @@ final class Cleanup
             }
 
             $this->state->set(self::KEPT, $kept, 7 * 86400);
+            // What the pages ask to be read again follows what this run read.
+            $this->recounts->refresh($now);
         } finally {
-            $this->lock->release('cleanup');
+            // This run's lease only: should the run have outlasted it, the
+            // next run took the lease, and keeps it.
+            if ($this->state->get(self::RUN) === $lease) {
+                $this->state->delete(self::RUN);
+            }
         }
 
         return $done;
-    }
-
-    /**
-     * Reads again the payments of the order of one that could not count:
-     * counted now if it can be; still unread, the merchant is told, once.
-     * True when none is left unread.
-     */
-    private function recount(PaymentRecord $record): bool
-    {
-        $services = ($this->servicesFor)($record->idShop);
-        $name = 'order:' . $record->idOrder;
-        if (!$services->lock()->acquire($name, 0)) {
-            return false;
-        }
-        try {
-            $order = $services->orders()->find($record->idOrder);
-            if ($order === null) {
-                return false;
-            }
-            $services->openPayments()->settle($order, Settlement::SEEN_LATER, [], false);
-            $order = $services->orders()->find($order->id) ?? $order;
-            $left = $services->ledger()->uncounted($order);
-            if (!$order->paid) {
-                foreach ($left as $still) {
-                    $services->settlement()->noteUncounted($order, $still);
-                }
-            }
-
-            return $left === [];
-        } catch (\Throwable $e) {
-            $this->logger->error('A payment could not be read again', ['order' => $record->idOrder, 'payment' => $record->paymentId, 'error' => $e->getMessage()]);
-
-            return false;
-        } finally {
-            $services->lock()->release($name);
-        }
     }
 
     /**
@@ -256,17 +239,26 @@ final class Cleanup
                 $settlement->remember($record, $settlement->outcome($record)['transaction']);
             }
             if ($settled['verdict'] !== OpenPayments::CLEAR || $ledger->holdsMoney($order) || $ledger->uncounted($order) !== [] || $ledger->chargedUncounted($order) !== []) {
-                $this->noteKept($services, $order);
+                $this->noteKept($services, $order, $settled['statuses']);
 
                 return 'kept';
             }
 
             $services->orders()->setState($order, $services->orders()->canceledState(), false);
-            $services->orders()->note($order, 'abandoned', $services->translator()->trans(
-                'This unpaid order was cancelled: its Wajub payment was not completed within %minutes% minutes of the order being placed, and Wajub holds no money for it. Its products are back in stock.',
-                ['%minutes%' => (string) $minutes],
-                'Modules.Wajub.Admin'
-            ));
+            $t = $services->translator();
+            // One wording for one minute and one for more, each translated
+            // whole (as Support\Ago): no language builds its plural from pieces.
+            $services->orders()->note($order, 'abandoned', $minutes === 1
+                ? $t->trans('This unpaid order was cancelled: its Wajub payment was not completed within 1 minute of the order being placed, and Wajub holds no money for it. Its products are back in stock.', [], 'Modules.Wajub.Admin')
+                : $t->trans(
+                    'This unpaid order was cancelled: its Wajub payment was not completed within %minutes% minutes of the order being placed, and Wajub holds no money for it. Its products are back in stock.',
+                    ['%minutes%' => (string) $minutes],
+                    'Modules.Wajub.Admin'
+                ));
+            // Its confirmation e-mail, held until it is paid, will never be
+            // sent: it holds the customer's name, e-mail address and
+            // addresses, kept no longer than needed.
+            $services->heldConfirmations()->forgetOrder($order);
             $this->logger->info('Unpaid order cancelled', ['order' => $order->id, 'minutes' => $minutes]);
 
             return 'cancelled';
@@ -295,14 +287,30 @@ final class Cleanup
 
     /**
      * Why an unpaid order was kept, for the merchant, once per reason: a
-     * payment being paid in instalments, with what it collected so far, or
-     * one that went through but could not count.
+     * payment being paid in instalments, with what it collected so far, one
+     * that went through but could not count, or one Wajub is still
+     * processing (`$statuses`: Wajub's status by payment id, as this run
+     * read them).
+     *
+     * @param array<string, string> $statuses
      */
-    private function noteKept(Services $services, OrderView $order): void
+    private function noteKept(Services $services, OrderView $order, array $statuses = []): void
     {
         $settlement = $services->settlement();
         foreach ($services->ledger()->uncounted($order) as $record) {
             $settlement->noteUncounted($order, $record);
+        }
+        // A payment Wajub is still processing (a card at its 3-D Secure
+        // challenge, a phone yet to confirm) may still go through: the
+        // merchant reads why the order waits past the delay, once.
+        foreach ($statuses as $paymentId => $status) {
+            if ($status === 'processing') {
+                $services->orders()->note($order, 'kept_processing_' . md5((string) $paymentId), $services->translator()->trans(
+                    'This unpaid order was not cancelled: Wajub payment %payment% may still go through (Wajub status: %status%). The order is looked at again once Wajub tells how the payment ended.',
+                    ['%payment%' => (string) $paymentId, '%status%' => $status],
+                    'Modules.Wajub.Admin'
+                ));
+            }
         }
         $open = $services->ledger()->instalmentsOpen($order);
         if ($open === null) {

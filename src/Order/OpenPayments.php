@@ -258,7 +258,8 @@ final class OpenPayments
         if (Ledger::openWithMoney($transaction) || $status === 'processing') {
             $this->settlement->remember($record, $transaction);
 
-            return [self::WAIT, ''];
+            // Its status said: the scheduled task tells the merchant why the order waits.
+            return [self::WAIT, $status];
         }
         if ($read['outcome'] === Client::OUTCOME_PENDING) {
             if (!$cancel) {
@@ -323,6 +324,8 @@ final class OpenPayments
 
         $record->status = 'cancelled';
         $record->state = PaymentRecord::FINAL;
+        // Its webhook, which follows, says the shop cancelled it.
+        $record->metadata[PaymentRecord::CANCELLED_BY_SHOP] = (string) time();
         $this->payments->save($record);
         $this->settlement->forgetOutcome($record);
         $this->logger->info('Open payment cancelled', ['order' => $order->id, 'payment' => $record->paymentId]);

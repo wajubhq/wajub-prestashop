@@ -86,7 +86,10 @@ final class ReturnFlow
         }
 
         $current = $this->payments->current($order->id);
-        if ($current === null) {
+        // Back from the page of a payment that counts already (its webhook
+        // came first): nothing more to learn from Wajub, no call. The
+        // confirmation page says what is left, if anything.
+        if ($current === null || $current->isCounted()) {
             return $confirmation;
         }
 

@@ -21,6 +21,8 @@ use Wajub\PrestaShop\Checkout\Tokens;
  * the payers left cancelled after the configured delay; then the e-mails of
  * keys that expire (Connection\KeyReminders). PrestaShop's Cron tasks
  * manager runs the same every hour without it (Wajub::hookActionCronJob()).
+ * Each run is noted (Order\TaskLog), for the back office to say when the
+ * task never runs, or no longer does.
  *
  * One address for every shop of a multistore: each order is handled with
  * the settings of its own shop (its delay, its key), whichever shop's
@@ -65,14 +67,13 @@ class WajubCronModuleFrontController extends ModuleFrontController
             $this->context->cookie->disallowWriting();
         }
         $services = $this->module->services();
-        $token = Tools::getValue('token', '');
-        if (!is_string($token) || !Tokens::matches($services->tokens()->cron(), substr(trim($token), 0, 64))) {
+        $token = (string) Tools::getValue('token', '');
+        if (!Tokens::matches($services->tokens()->cron(), substr(trim($token), 0, 64))) {
             $this->respond(403, ['ran' => false]);
         }
 
         try {
-            $done = $this->module->runCleanup();
-            $done['reminded'] = $this->module->runReminders();
+            $done = $this->module->runScheduledTask();
         } catch (Throwable $e) {
             PrestaShopLogger::addLog('Wajub: the scheduled task failed: ' . $e->getMessage(), 3, null, 'Wajub', 0, true);
             $done = null;

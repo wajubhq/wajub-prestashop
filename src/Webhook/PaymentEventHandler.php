@@ -41,6 +41,14 @@ if (!defined('_PS_VERSION_')) {
  * A delivery repeated, or one of a payment counted already, changes
  * nothing; one of a payment that went through on an order paid already
  * tells the merchant they were paid twice.
+ *
+ * A delivery acts as a read of the payment would (the payer's return, the
+ * status checks, "Check status": Order\Settlement), with the same states and
+ * notes; one whose payment says no status is named by its event
+ * (`payment.expired` is an expired payment). The events of a payment paid
+ * in instalments (`payment.split.*`, each with the whole payment, `partial`
+ * between two instalments) keep where it stands, so that the order is never
+ * given back while money is being taken for it.
  */
 final class PaymentEventHandler implements EventHandler
 {
@@ -76,9 +84,12 @@ final class PaymentEventHandler implements EventHandler
         $this->logger = $logger;
     }
 
+    /** Events that say where a payment stands without ending it: kept on the payment. */
+    private const UNDER_WAY = ['payment.processing', 'payment.partial', 'payment.split.processing', 'payment.split.succeeded', 'payment.split.failed'];
+
     public function handles(string $type): bool
     {
-        return in_array($type, ['payment.succeeded', 'payment.processing', 'payment.partial'], true) || isset(self::UNPAID[$type]);
+        return $type === 'payment.succeeded' || in_array($type, self::UNDER_WAY, true) || isset(self::UNPAID[$type]);
     }
 
     public function handle(Event $event): void
@@ -107,7 +118,7 @@ final class PaymentEventHandler implements EventHandler
 
         $services = ($this->servicesFor)($record->idShop);
         $lock = $services->lock();
-        $name = 'order:' . $record->idOrder;
+        $name = 'order:' . $services->orders()->leadId($record->idOrder);
         if (!$lock->acquire($name, self::LOCK_WAIT)) {
             // The payer's return holds it: Wajub sends this delivery again.
             throw new \RuntimeException('The order is being settled by another request');

@@ -1,0 +1,27 @@
+# Wajub for PrestaShop
+#
+# @author    Wajub
+# @copyright Since 2026 Wajub
+# @license   https://opensource.org/licenses/MIT MIT License
+#
+# No PHP file of the module is ever asked for by its own address: PrestaShop
+# runs the module's pages (the webhook, the scheduled task, the checkout's
+# controllers) through the shop's index.php (module/wajub/<page>), and
+# the module's pictures, scripts and styles are not PHP. A request for one of
+# its PHP files is refused, in this folder and every folder under it, on
+# Apache 2.2 and 2.4, as PrestaShop Addons asks (bin/lint-module.php checks).
+
+# Apache 2.2
+<IfModule !mod_authz_core.c>
+    <Files *.php>
+        Order allow,deny
+        Deny from all
+    </Files>
+</IfModule>
+
+# Apache 2.4
+<IfModule mod_authz_core.c>
+    <Files *.php>
+        Require all denied
+    </Files>
+</IfModule>

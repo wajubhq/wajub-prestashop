@@ -57,6 +57,9 @@ final class FakeWajubApi implements Transport
     /** @var (callable(array<string, mixed>): void)|null run with each refund made, before its answer */
     public $duringRefund;
 
+    /** @var (callable(string): void)|null run with each request, by its route, before its answer */
+    public $duringRequest;
+
     private int $created = 0;
 
     private int $refundCount = 0;
@@ -88,6 +91,9 @@ final class FakeWajubApi implements Transport
         $route = $method . ' ' . $path;
         $json = $body !== null ? json_decode($body, true) : null;
         $this->sent[] = ['route' => $route, 'body' => $json, 'headers' => $headers];
+        if ($this->duringRequest !== null) {
+            ($this->duringRequest)($route);
+        }
 
         if (isset($this->next[$route]) && $this->next[$route] !== []) {
             $answer = array_shift($this->next[$route]);
@@ -266,6 +272,7 @@ function money_shop(string $environment = 'live', array $settings = []): Service
         'money' => new PlainMoneyFormatter(),
         'storefront' => $GLOBALS['storefront'],
         'tokens' => new Tokens('test-secret'),
+        'recountHint' => $GLOBALS['recountHint'],
     ]);
     $GLOBALS['money_shop'] = $s;
 
@@ -332,9 +339,10 @@ function money_payment(int $idOrder, string $paymentId, array $fields = []): Pay
 
 /**
  * Counts `$paymentId` toward the order, for `$amount`, as a read of it that
- * went through would have: an OrderPayment, and the payment final.
+ * went through would have: an OrderPayment, and the payment final; made by
+ * Wajub at `$madeAt` (unix time) when said, as its `created_at` says.
  */
-function counted(int $idOrder, string $paymentId, float $amount, string $environment = 'live'): PaymentRecord
+function counted(int $idOrder, string $paymentId, float $amount, string $environment = 'live', int $madeAt = 0): PaymentRecord
 {
     $record = $GLOBALS['payments']->find($paymentId) ?? money_payment($idOrder, $paymentId, ['environment' => $environment]);
     $record->environment = $environment;
@@ -343,6 +351,9 @@ function counted(int $idOrder, string $paymentId, float $amount, string $environ
     $record->amountPaid = $amount;
     $record->status = 'succeeded';
     $record->state = PaymentRecord::FINAL;
+    if ($madeAt > 0) {
+        $record->setMeta(PaymentRecord::MADE_AT, (string) $madeAt);
+    }
     $GLOBALS['payments']->save($record);
 
     return $record;

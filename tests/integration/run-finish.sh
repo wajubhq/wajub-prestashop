@@ -26,7 +26,9 @@
 #   3. PrestaShop's GDPR module: the customer's Wajub payments exported, then
 #      erased (the payments unlinked, the held e-mails gone), and never a
 #      guest's to an account opened with the guest's e-mail address;
-#   4. the zip: what it holds, and what it leaves out.
+#   4. the zip: what it holds (the Symfony services of the back office, the
+#      notices' script and style), and what it leaves out (the developers'
+#      part of composer.json, bitmaps of logos).
 #
 # Run it after run.sh, on a shop with the module installed:
 #
@@ -38,7 +40,7 @@
 
 set -euo pipefail
 
-MAJOR="${1:?usage: run-finish.sh <8|9>}"
+MAJOR="${1:?usage: run-finish.sh <81|8|9>}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ENV_DIR="${WAJUB_PS_ENV:-$HOME/.cache/wajub-prestashop/env}"
 source "$ENV_DIR/lib.sh"
@@ -58,7 +60,7 @@ CHECKS="wajub-checks-finish-ps$MAJOR.php"
 shop_checks() { cp "$ROOT/tests/integration/checks.php" "$SHARE_DIR/$CHECKS"; "$ENV_DIR/exec.sh" "$MAJOR" php "/wajub-share/$CHECKS" "$@"; }
 run_checks() { shop_checks "$@" || failures=$((failures + 1)); }
 
-if [ "$MAJOR" = 8 ]; then FO="$PS_URL/en"; else FO="$PS_URL"; fi
+if [ "$PS_FAMILY" = 8 ]; then FO="$PS_URL/en"; else FO="$PS_URL"; fi
 # The second shop's address: the same server, under another host name.
 PORT="${PS_URL##*:}"
 SECOND_HOST="127.0.0.1:$PORT"
@@ -170,7 +172,7 @@ bo_login() {
     local login_page token landing
     rm -f "$bo_jar"
     login_page="$(curl -sL -c "$bo_jar" -b "$bo_jar" --max-time 120 "$PS_ADMIN_URL")"
-    if [ "$MAJOR" = 8 ]; then
+    if [ "$PS_FAMILY" = 8 ]; then
         curl -sL -c "$bo_jar" -b "$bo_jar" --max-time 120 -o /dev/null --data-urlencode "email=$ADMIN_EMAIL" --data-urlencode "passwd=$ADMIN_PASSWORD" -d submitLogin=1 "${PS_ADMIN_URL}index.php?controller=AdminLogin"
     else
         token="$(grep -oE 'id="_token" name="_token" value="[^"]+"' <<<"$login_page" | sed 's/.*value="//; s/"$//')"
@@ -179,7 +181,7 @@ bo_login() {
     fi
 }
 admin_token() {
-    if [ "$MAJOR" = 8 ]; then
+    if [ "$PS_FAMILY" = 8 ]; then
         php_in_shop 'define("_PS_ADMIN_DIR_", getcwd() . "/admin-dev"); require "config/config.inc.php"; $e = new Employee(1); echo Tools::getAdminToken("'"$1"'" . (int) Tab::getIdFromClassName("'"$1"'") . (int) $e->id);' | tail -1
     else
         echo "$SESSION_TOKEN"
@@ -325,7 +327,7 @@ page="$(curl -sL -c "$bo_jar" -b "$bo_jar" --max-time 120 "$(page_url)")"
 contains "the back office says the key expires soon" "$page" 'Your Wajub key expires soon.'
 contains "and when" "$page" 'The sandbox key Connect with Wajub created for this shop expires on'
 contains "with the way to connect again" "$page" 'Connect with Wajub again'
-if [ "$MAJOR" = 8 ]; then
+if [ "$PS_FAMILY" = 8 ]; then
     other="$(curl -sL -c "$bo_jar" -b "$bo_jar" --max-time 120 "${PS_ADMIN_URL}index.php?controller=AdminCustomers&token=$(admin_token AdminCustomers)")"
 else
     other="$(curl -sL -c "$bo_jar" -b "$bo_jar" --max-time 120 "${PS_ADMIN_URL}index.php/sell/customers/?_token=$SESSION_TOKEN")"
@@ -379,9 +381,13 @@ rm -rf "$zip_dir"
 mkdir -p "$zip_dir"
 if WAJUB_BUILD_STAGE="$zip_dir/stage" "$ROOT/bin/build-zip.sh" "$zip_dir/wajub.zip" >/dev/null; then ok "the zip is built"; else fail "the zip is built"; fi
 listing="$(unzip -Z1 "$zip_dir/wajub.zip")"
-for path in wajub/wajub.php wajub/config.xml wajub/logo.png wajub/LICENSE wajub/vendor/autoload.php wajub/mails/en/key_expiry.html wajub/mails/fr/key_expiry.txt wajub/translations/fr-FR/ModulesWajubAdmin.fr-FR.xlf wajub/views/js/checkout-options.js wajub/upgrade/index.php; do
+for path in wajub/wajub.php wajub/.htaccess wajub/config.xml wajub/logo.png wajub/LICENSE wajub/vendor/autoload.php wajub/mails/en/key_expiry.html wajub/mails/fr/key_expiry.txt wajub/translations/fr-FR/ModulesWajubAdmin.fr-FR.xlf wajub/views/js/checkout-options.js wajub/views/js/recount.js wajub/controllers/front/recount.php wajub/upgrade/index.php wajub/upgrade/upgrade-1.0.1.php wajub/config/admin/services.yml wajub/config/admin/index.php wajub/views/js/admin-notices.js wajub/views/css/admin-notices.css wajub/views/img/methods/mtn.svg wajub/composer.json; do
     if grep -qxF "$path" <<<"$listing"; then ok "it holds $path"; else fail "it holds $path"; fi
 done
+composer_json="$(unzip -p "$zip_dir/wajub.zip" wajub/composer.json)"
+contains "its composer.json says how the classes load" "$composer_json" '"Wajub\\PrestaShop\\": "src/"'
+lacks "and nothing of the developers' (require-dev, scripts naming bin/)" "$composer_json" 'require-dev|"scripts"|bin/'
+lacks "every logo an SVG: no bitmap to embed" "$listing" '^wajub/views/img/methods/.*\.png$'
 lacks "nothing for developers in it" "$listing" '^wajub/(tests|bin|build|i18n|node_modules|\.git|\.phpstan)/|\.md$|composer\.lock$|php-cs-fixer|phpstan|\.zip$'
 lacks "no development package in vendor/" "$listing" '^wajub/vendor/(phpstan|friendsofphp|prestashop|symfony)/'
 missing=""

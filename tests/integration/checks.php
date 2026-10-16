@@ -65,10 +65,20 @@ if (PHP_SAPI !== 'cli') {
  *                                    held until it is paid: "held" or "none"
  *     php checks.php returns <0|1>   product returns off or on (PS_ORDER_RETURN)
  *     php checks.php deliver <id_order>  the order marked delivered, as the merchant does
- *     php checks.php failing-hook <write|first|remove>  a module whose
- *                                    actionOrderSlipAdd fails: its files written,
- *                                    run before Wajub's once installed (by
- *                                    bin/console), its files removed
+ *     php checks.php failing-hook <write|first|remove> [how]  a module whose
+ *                                    hook fails: its files written, run before
+ *                                    Wajub's once installed (by bin/console),
+ *                                    its files removed. `how` (write only), in
+ *                                    actionOrderSlipAdd, after PrestaShop
+ *                                    added the slip: `exception` (by
+ *                                    default); `error`, a PHP Error, which
+ *                                    PrestaShop's hooks never catch, left to
+ *                                    Symfony's handler; `fatal`, the same
+ *                                    with no handler left: PHP ends the
+ *                                    request, Symfony's kernel never
+ *                                    reaches its end; `cancel-fatal` that
+ *                                    one in actionProductCancel, before
+ *                                    PrestaShop adds the slip
  *     php checks.php multistore-url-on <domain>  multistore on with a second
  *                                    shop at an address of its own (`domain`,
  *                                    such as 127.0.0.1:8082), the first shop's
@@ -92,6 +102,70 @@ if (PHP_SAPI !== 'cli') {
  *                                    server on the host at that port, or off
  *     php checks.php gdpr <email>    what PrestaShop's GDPR module gets of
  *                                    that customer, exported then erased
+ *     php checks.php mode            "debug" or "production" (_PS_MODE_DEV_)
+ *     php checks.php inject-order <json>  an order of the demo customer placed
+ *                                    with the module, its Wajub payments
+ *                                    written as counted (see below); prints
+ *                                    its id
+ *     php checks.php paste-key       the sandbox key on STDIN, saved as the
+ *                                    connection form saves it (checked with
+ *                                    Wajub first); prints Wajub's answer,
+ *                                    never the key
+ *     php checks.php forget-key      the sandbox key and the environment back
+ *                                    to the integration stand-in's
+ *     php checks.php split-carriers <on|off> [ids]  products 1 and 2 shipped
+ *                                    by two carriers each alone, so that a
+ *                                    cart of both becomes two orders; off:
+ *                                    every carrier again
+ *     php checks.php tax-display <incl|excl>  the demo customer's group shown
+ *                                    prices with or without tax
+ *     php checks.php recount <due|now|state> [id_order]  the payments that
+ *                                    could not count: due now, or what is due
+ *                                    (JSON)
+ *     php checks.php recount gone     a payment that could not count, due
+ *                                    now, of an order the shop no longer has
+ *                                    (deleted); prints its id
+ *     php checks.php recount remove <payment>  that payment's row removed
+ *     php checks.php recount hint-sql  the hint written by one statement on
+ *                                    what the database holds, not on what
+ *                                    the request read when it began (JSON)
+ *     php checks.php voucher <make amount|remove code>  a voucher code of
+ *                                    `amount` (tax included) the demo customer
+ *                                    can use once; prints its code
+ *     php checks.php array-hook <write|install|position|seen|remove>  a module
+ *                                    on the refund forms' hook that counts the
+ *                                    products to refund, installed after
+ *                                    Wajub: its files, its install, where
+ *                                    Wajub runs on that hook ("last"), what
+ *                                    it saw, its files removed
+ *     php checks.php group <id_order>  the orders of the order's cart and
+ *                                    the id the module goes by (JSON)
+ *     php checks.php add-payments <id_order> <json> [paid]  payments counted
+ *                                    toward an order placed already
+ *     php checks.php save-endpoint <id> <url>  a sandbox webhook endpoint
+ *                                    registered for all shops, as "Configure
+ *                                    automatically" keeps it
+ *     php checks.php version         the module's version PrestaShop has
+ *                                    installed, and its recount page
+ *     php checks.php notices <what> [value]  what the back office's notices
+ *                                    read (tests/integration/run-notices.sh):
+ *                                    `keys none|sandbox|live-only|live-missing|live`
+ *                                    the keys and environment of all shops;
+ *                                    `task never|late|now|clear` the scheduled
+ *                                    task's log; `methods on|off`; `currencies
+ *                                    none|all` the module's currencies in
+ *                                    Payment > Preferences; `unhide` every
+ *                                    notice hidden shown again; `state` what
+ *                                    they read, as JSON; `profiles` what a
+ *                                    profile that may read the settings, or
+ *                                    change them too, is shown (JSON);
+ *                                    `uninstall-text` the
+ *                                    confirmation PrestaShop asks; `https
+ *                                    <ssl>,<all pages>` (1 or 0 each, set for
+ *                                    this run only, never saved) the return
+ *                                    address PrestaShop builds, whether the
+ *                                    module finds it HTTPS, and the warning
+ *                                    the switch to Live shows, as JSON
  *
  * Prints one line per check, and exits 1 when one failed.
  */
@@ -129,6 +203,70 @@ function check(bool $ok, string $label): void
 function tableExists(string $table): bool
 {
     return (bool) Db::getInstance()->getValue('SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = \'' . pSQL(_DB_PREFIX_ . $table) . '\'', false);
+}
+
+/**
+ * Symfony's container, as bin/console boots it: what Module::install() and
+ * PaymentModule::validateOrder() (its locale) read outside a page.
+ */
+function bootKernel(): void
+{
+    global $kernel;
+    if (is_file(getcwd() . '/.env') && class_exists(Symfony\Component\Dotenv\Dotenv::class)) {
+        (new Symfony\Component\Dotenv\Dotenv())->usePutenv(false)->loadEnv(getcwd() . '/.env');
+    }
+    $kernelClass = class_exists('AdminKernel') ? 'AdminKernel' : 'AppKernel';
+    $kernel = new $kernelClass(_PS_ENV_, false);
+    $kernel->boot();
+}
+
+/**
+ * Wajub payments counted toward the order, as Order\Settlement counts them
+ * (a row of the module, an OrderPayment of the reference), then the order
+ * "Payment accepted" when `$paid`, else "Partially paid with Wajub".
+ *
+ * @param list<array{id: string, counted: float|int|string, environment?: string, made_at?: int}> $payments
+ */
+function countPayments(Services $services, Wajub\PrestaShop\Order\OrderView $view, array $payments, bool $paid): void
+{
+    // "rest": what the order's total leaves once the others are counted.
+    $others = 0.0;
+    foreach ($payments as $payment) {
+        $others += is_numeric($payment['counted']) ? (float) $payment['counted'] : 0.0;
+    }
+    foreach ($payments as $i => $payment) {
+        if ($payment['counted'] === 'rest') {
+            $payments[$i]['counted'] = $payment['counted'] = $view->total - $others;
+        }
+        $record = new Wajub\PrestaShop\Payment\PaymentRecord();
+        $record->paymentId = (string) $payment['id'];
+        $record->reference = 'Order #' . $view->reference;
+        $record->idShop = $view->idShop;
+        $record->idCart = $view->idCart;
+        $record->idOrder = $view->id;
+        $record->idCustomer = $view->idCustomer;
+        $record->environment = (string) ($payment['environment'] ?? 'sandbox');
+        $record->method = 'mobile_money';
+        $record->mode = Wajub\PrestaShop\Payment\PaymentRecord::MODE_HOSTED;
+        $record->state = Wajub\PrestaShop\Payment\PaymentRecord::FINAL;
+        $record->status = 'succeeded';
+        $record->currency = $view->currency;
+        $record->amount = (float) $payment['counted'];
+        $record->amountPaid = (float) $payment['counted'];
+        $record->counted = (float) $payment['counted'];
+        $record->channel = 'cm.mtn';
+        if (!empty($payment['made_at'])) {
+            $record->setMeta('made_at', (string) (int) $payment['made_at']);
+        }
+        $record->idOrderPayment = $services->orders()->addPayment($view, (float) $payment['counted'], $record->paymentId);
+        $services->payments()->save($record);
+    }
+    $view = $services->orders()->find($view->id) ?? $view;
+    if ($paid) {
+        $services->orders()->setState($view, $services->orders()->paidState(), false);
+    } elseif ($payments !== []) {
+        $services->orders()->setState($view, $services->settings()->partialState(), false);
+    }
 }
 
 /** The ids of the module's order states, kept or not in the configuration. */
@@ -318,7 +456,9 @@ switch ($mode) {
         $db = Db::getInstance();
         echo json_encode([
             'refunds' => $db->executeS('SELECT refund_id, request_key, payment_id, id_order_slip, environment, origin, status, amount, order_unpaid FROM `' . _DB_PREFIX_ . 'wajub_refund` WHERE id_order = ' . (int) $argument . ' ORDER BY id_wajub_refund', true, false) ?: [],
-            'slips' => $db->executeS('SELECT id_order_slip, amount, total_products_tax_incl, total_shipping_tax_incl, order_slip_type FROM `' . _DB_PREFIX_ . 'order_slip` WHERE id_order = ' . (int) $argument . ' ORDER BY id_order_slip', true, false) ?: [],
+            'slips' => $db->executeS('SELECT id_order_slip, amount, total_products_tax_incl, total_products_tax_excl, total_shipping_tax_incl, order_slip_type FROM `' . _DB_PREFIX_ . 'order_slip` WHERE id_order = ' . (int) $argument . ' ORDER BY id_order_slip', true, false) ?: [],
+            // What the module counts as refunded on the order (its group).
+            'given_back' => ($view = (new Wajub\PrestaShop\Order\PrestaShopOrders())->find((int) $argument)) !== null ? (new Wajub\PrestaShop\Order\PrestaShopOrders())->refundedOnOrder($view) : 0,
         ], JSON_UNESCAPED_SLASHES) . "\n";
         exit(0);
 
@@ -344,11 +484,29 @@ switch ($mode) {
 
     case 'failing-hook':
         // Another module whose actionOrderSlipAdd fails, run before the
-        // module's: PrestaShop adds the credit slip, then stops at it.
+        // module's: PrestaShop adds the credit slip, then stops at it. With
+        // an exception, which PrestaShop swallows once debug mode is off;
+        // a PHP Error, which PrestaShop's hooks and Symfony's kernel never
+        // catch, left to Symfony's error handler (which may still end the
+        // kernel); or one that PHP itself ends the request with, as when
+        // another module's error reporting took over from Symfony's: then
+        // no end of request (kernel.terminate) ever runs. Or its
+        // actionProductCancel, which PrestaShop runs before it adds the slip.
         $dir = _PS_MODULE_DIR_ . 'wajubfailinghook';
+        $failing = ['exception' => 'actionOrderSlipAdd', 'error' => 'actionOrderSlipAdd', 'fatal' => 'actionOrderSlipAdd', 'cancel-fatal' => 'actionProductCancel'];
         if ($argument === 'write') {
+            $how = (string) ($argv[3] ?? 'exception');
+            if (!isset($failing[$how])) {
+                echo "unknown failure {$how}\n";
+                exit(2);
+            }
             @mkdir($dir);
-            file_put_contents($dir . '/wajubfailinghook.php', <<<'MODULE'
+            $hook = $failing[$how];
+            $body = $how === 'exception'
+                ? "throw new RuntimeException('A module whose {$hook} fails');"
+                : ($how === 'error' ? '' : "// No handler left: PHP ends the request.\n        set_exception_handler(null);\n        ")
+                    . "\$nothing = null;\n\n        return \$nothing->getFields();";
+            file_put_contents($dir . '/wajubfailinghook.php', str_replace(['HOOK_NAME', 'HOOK_METHOD', 'HOOK_BODY'], [$hook, 'hook' . ucfirst($hook), $body], <<<'MODULE'
 <?php
 if (!defined('_PS_VERSION_')) {
     exit;
@@ -365,20 +523,20 @@ class WajubFailingHook extends Module
         $this->ps_versions_compliancy = ['min' => '8.0.0', 'max' => _PS_VERSION_];
         parent::__construct();
         $this->displayName = 'Wajub tests: a failing hook';
-        $this->description = 'Fails in actionOrderSlipAdd.';
+        $this->description = 'Fails in HOOK_NAME.';
     }
 
     public function install()
     {
-        return parent::install() && $this->registerHook('actionOrderSlipAdd');
+        return parent::install() && $this->registerHook('HOOK_NAME');
     }
 
-    public function hookActionOrderSlipAdd($params)
+    public function HOOK_METHOD($params)
     {
-        throw new RuntimeException('A module whose actionOrderSlipAdd fails');
+        HOOK_BODY
     }
 }
-MODULE);
+MODULE));
             echo "written\n";
             exit(0);
         }
@@ -388,7 +546,7 @@ MODULE);
                 echo "not installed\n";
                 exit(1);
             }
-            $hook = (int) Hook::getIdByName('actionOrderSlipAdd');
+            $hook = (int) Hook::getIdByName($module->isRegisteredInHook('actionProductCancel') ? 'actionProductCancel' : 'actionOrderSlipAdd');
             Db::getInstance()->update('hook_module', ['position' => 0], 'id_hook = ' . $hook . ' AND id_module = ' . (int) $module->id);
             $first = (int) Db::getInstance()->getValue('SELECT id_module FROM `' . _DB_PREFIX_ . 'hook_module` WHERE id_hook = ' . $hook . ' AND id_shop = ' . (int) Context::getContext()->shop->id . ' ORDER BY position, id_module', false);
             echo ($first === (int) $module->id ? 'first' : 'not first') . "\n";
@@ -579,13 +737,7 @@ MODULE);
     case 'install-fails':
         // Module::install() reads the module's translations through
         // Symfony's container, which bin/console boots: so is it here.
-        global $kernel;
-        if (is_file(getcwd() . '/.env') && class_exists(Symfony\Component\Dotenv\Dotenv::class)) {
-            (new Symfony\Component\Dotenv\Dotenv())->usePutenv(false)->loadEnv(getcwd() . '/.env');
-        }
-        $kernelClass = class_exists('AdminKernel') ? 'AdminKernel' : 'AppKernel';
-        $kernel = new $kernelClass(_PS_ENV_, false);
-        $kernel->boot();
+        bootKernel();
         $module = new class extends Wajub {
             public function registerHook($hook_name, $shop_list = null)
             {
@@ -862,6 +1014,444 @@ MODULE);
         }
         check($held > 0 && $stillHeld === 0, 'the confirmation e-mails held for their orders, with their address, are gone');
         break;
+
+    case 'mode':
+        echo (_PS_MODE_DEV_ ? 'debug' : 'production') . "\n";
+        exit(0);
+
+    case 'inject-order':
+        // An order of the demo customer placed with the module, as
+        // validation.php places one (validateOrder()), in "Awaiting Wajub
+        // payment", then its Wajub payments written as the module counts
+        // them: what a scenario starts from without asking Wajub (a shop in
+        // production mode never reaches the API stand-in). JSON:
+        //   products  [[id_product, quantity], ...]
+        //   payments  [{"id": "trx_…", "counted": 4000, "environment": "sandbox", "made_at": unix time}, ...]
+        //   paid      true: "Payment accepted"; false: "Partially paid" once something counts
+        $spec = json_decode($argument, true);
+        if (!is_array($spec)) {
+            echo "no spec\n";
+            exit(2);
+        }
+        bootKernel();
+        $db = Db::getInstance();
+        $context = Context::getContext();
+        $customer = new Customer((int) Customer::customerExists('pub@prestashop.com', true));
+        $address = (int) $db->getValue('SELECT id_address FROM `' . _DB_PREFIX_ . 'address` WHERE id_customer = ' . (int) $customer->id . ' AND alias = \'Douala\' AND deleted = 0', false);
+        $context->customer = $customer;
+        $context->shop = new Shop((int) Configuration::get('PS_SHOP_DEFAULT'));
+        $context->currency = new Currency((int) Configuration::get('PS_CURRENCY_DEFAULT'));
+        $context->language = new Language((int) Configuration::get('PS_LANG_DEFAULT'));
+        $context->link = new Link();
+        $context->employee = new Employee((int) $db->getValue('SELECT MIN(id_employee) FROM `' . _DB_PREFIX_ . 'employee` WHERE active = 1', false));
+        $carrier = (int) $db->getValue('SELECT c.id_carrier FROM `' . _DB_PREFIX_ . 'carrier` c WHERE c.deleted = 0 AND c.active = 1 AND c.is_free = 1 ORDER BY c.id_carrier', false);
+        $cart = new Cart();
+        $cart->id_customer = (int) $customer->id;
+        $cart->id_address_delivery = $address;
+        $cart->id_address_invoice = $address;
+        $cart->id_currency = (int) $context->currency->id;
+        $cart->id_lang = (int) $context->language->id;
+        $cart->id_shop = (int) $context->shop->id;
+        $cart->id_shop_group = (int) $context->shop->id_shop_group;
+        $cart->id_carrier = $carrier;
+        $cart->secure_key = (string) $customer->secure_key;
+        $cart->add();
+        $context->cart = $cart;
+        foreach ((array) ($spec['products'] ?? [[1, 1]]) as [$product, $quantity]) {
+            $cart->updateQty((int) $quantity, (int) $product);
+        }
+        $cart->setDeliveryOption([$address => $carrier . ',']);
+        $cart->update();
+        $module = Module::getInstanceByName('wajub');
+        $services = $module->servicesFor((int) $context->shop->id);
+        $module->validateOrder((int) $cart->id, $services->settings()->awaitingState(), (float) $cart->getOrderTotal(true, Cart::BOTH), 'Mobile Money', null, [], (int) $cart->id_currency, false, (string) $customer->secure_key);
+        $view = $services->orders()->find((int) $module->currentOrder);
+        if ($view === null) {
+            echo "no order\n";
+            exit(1);
+        }
+        countPayments($services, $view, (array) ($spec['payments'] ?? []), !empty($spec['paid']));
+        echo $view->id . "\n";
+        exit(0);
+
+    case 'add-payments':
+        // Payments counted toward an order placed already, as inject-order
+        // writes them: `$argv[3]` their JSON, `$argv[4]` "paid" to mark the
+        // order paid.
+        $module = Module::getInstanceByName('wajub');
+        $order = new Order((int) $argument);
+        // Order::addOrderPayment() rounds as the context's currency says.
+        Context::getContext()->currency = new Currency((int) $order->id_currency);
+        $services = $module->servicesFor((int) $order->id_shop);
+        $view = $services->orders()->find((int) $argument);
+        if ($view === null) {
+            echo "no order\n";
+            exit(1);
+        }
+        countPayments($services, $view, (array) json_decode((string) ($argv[3] ?? '[]'), true), ($argv[4] ?? '') === 'paid');
+        echo "counted\n";
+        exit(0);
+
+    case 'paste-key':
+        // As the connection form saves a pasted key (FormHandler, through
+        // KeyManager): checked with Wajub, then saved encrypted. The key is
+        // read from STDIN, never from the command line, and never printed.
+        $key = trim((string) stream_get_contents(STDIN));
+        $services = new Services(Scope::fromContext(), Wajub::VERSION);
+        $answer = $services->keyManager()->saveKey('sandbox', $key);
+        $services->settings()->setEnvironment('sandbox');
+        $saved = $services->settings()->secretKey('sandbox') === $key && $key !== '';
+        $message = implode(' ', array_column($answer['notices'], 'text'));
+        echo json_encode(['saved' => $saved, 'business' => (string) ($answer['check']['business'] ?? ''), 'message' => $key !== '' ? str_replace($key, '[key]', $message) : $message], JSON_UNESCAPED_UNICODE) . "\n";
+        exit($saved ? 0 : 1);
+
+    case 'forget-key':
+        // Back to the integration stand-in's key: nothing of a real account
+        // left in the shop.
+        $settings = (new Services(Scope::fromContext(), Wajub::VERSION))->settings();
+        $settings->setEnvironment('sandbox');
+        $settings->setSecretKey('sandbox', 'sk_test.integration' . str_repeat('k', 80));
+        $settings->setKeyOrigin('sandbox', null);
+        echo "forgotten\n";
+        exit(0);
+
+    case 'split-carriers':
+        // Products 1 and 2 each shipped by one carrier only: PrestaShop
+        // makes a cart of both two orders, one per carrier, under one
+        // reference (Cart::getPackageList()).
+        $db = Db::getInstance();
+        $carriers = array_map('intval', array_column($db->executeS('SELECT id_reference FROM `' . _DB_PREFIX_ . 'carrier` WHERE deleted = 0 AND active = 1 ORDER BY id_carrier', true, false) ?: [], 'id_reference'));
+        $shop = (int) Configuration::get('PS_SHOP_DEFAULT');
+        $db->delete('product_carrier', 'id_product IN (1, 2)');
+        if ($argument === 'on' && count($carriers) >= 2) {
+            $db->insert('product_carrier', ['id_product' => 1, 'id_carrier_reference' => $carriers[0], 'id_shop' => $shop]);
+            $db->insert('product_carrier', ['id_product' => 2, 'id_carrier_reference' => $carriers[1], 'id_shop' => $shop]);
+        }
+        Cache::clean('*');
+        echo ($argument === 'on' ? 'split' : 'every carrier') . "\n";
+        exit(0);
+
+    case 'tax-display':
+        // The demo customer's default group shown prices without tax (B2B),
+        // or with (PrestaShop's default): the refund forms then take amounts
+        // without tax, or with.
+        $customer = new Customer((int) Customer::customerExists('pub@prestashop.com', true));
+        $group = new Group((int) $customer->id_default_group);
+        $group->price_display_method = $argument === 'excl' ? PS_TAX_EXC : PS_TAX_INC;
+        $group->update();
+        Cache::clean('*');
+        echo ((int) (new Group((int) $group->id))->price_display_method === PS_TAX_EXC ? 'excl' : 'incl') . "\n";
+        exit(0);
+
+    case 'recount':
+        // The payments that could not count (Order\Recounts): `due` makes
+        // those of the order due now, as a few minutes later; `state` says
+        // what is due, and whether the pages ask.
+        $module = Module::getInstanceByName('wajub');
+        $services = new Services(Scope::fromContext(), Wajub::VERSION);
+        if ($argument === 'gone') {
+            $gone = (int) Db::getInstance()->getValue('SELECT IFNULL(MAX(id_order), 0) FROM `' . _DB_PREFIX_ . 'orders`', false) + 900000;
+            $record = new Wajub\PrestaShop\Payment\PaymentRecord();
+            $record->paymentId = 'trx_test_gone_order_' . time();
+            $record->idShop = (int) Context::getContext()->shop->id;
+            $record->idOrder = $gone;
+            $record->environment = 'sandbox';
+            $record->method = 'mobile_money';
+            $record->mode = Wajub\PrestaShop\Payment\PaymentRecord::MODE_HOSTED;
+            $record->state = Wajub\PrestaShop\Payment\PaymentRecord::UNCOUNTED;
+            $record->status = 'succeeded';
+            $record->currency = 'XAF';
+            $record->amount = 4000.0;
+            $record->amountPaid = 4000.0;
+            $record->setMeta(Wajub\PrestaShop\Order\Recounts::DUE, (string) (time() - 60));
+            $services->payments()->save($record);
+            $services->recountHint()->set(time() - 60);
+            echo $record->paymentId . "\n";
+            exit(0);
+        }
+        if ($argument === 'remove') {
+            Db::getInstance()->delete('wajub_payment', 'payment_id = \'' . pSQL((string) ($argv[3] ?? '')) . '\'');
+            $services->recountHint()->set(0);
+            echo "removed\n";
+            exit(0);
+        }
+        if ($argument === 'hint-sql') {
+            // Another request writes the setting while this one holds what
+            // it read when it began (Configuration's copy).
+            $hint = $services->recountHint();
+            $elsewhere = static function (int $value): void {
+                Db::getInstance()->execute('UPDATE `' . _DB_PREFIX_ . 'configuration` SET value = \'' . $value . '\' WHERE name = \'' . pSQL(Settings::RECOUNT_AT) . '\' AND id_shop IS NULL AND id_shop_group IS NULL');
+            };
+            $stored = static function (): int {
+                return (int) Db::getInstance()->getValue('SELECT value FROM `' . _DB_PREFIX_ . 'configuration` WHERE name = \'' . pSQL(Settings::RECOUNT_AT) . '\' AND id_shop IS NULL AND id_shop_group IS NULL', false);
+            };
+            $was = $hint->get();
+            $results = [];
+            $hint->set(2000000000);
+            $results['set'] = $stored();
+            $elsewhere(1900000000);
+            $hint->lower(1950000000);
+            $results['lower_later_than_elsewhere'] = $stored();
+            $hint->lower(1800000000);
+            $results['lower_sooner'] = $stored();
+            $elsewhere(0);
+            $hint->lower(1700000000);
+            $results['lower_none_elsewhere'] = $stored();
+            $hint->postpone(1750000000);
+            $results['postpone_due'] = $stored();
+            $elsewhere(1760000000);
+            $hint->postpone(1755000000);
+            $results['postpone_later_elsewhere'] = $stored();
+            $elsewhere(0);
+            $hint->postpone(1790000000);
+            $results['postpone_none'] = $stored();
+            $results['read_now'] = $hint->get();
+            $hint->set($was);
+            echo json_encode($results) . "\n";
+            exit(0);
+        }
+        if ($argument === 'due') {
+            foreach ($services->payments()->forOrder((int) ($argv[3] ?? 0)) as $record) {
+                if ($record->state === Wajub\PrestaShop\Payment\PaymentRecord::UNCOUNTED) {
+                    $record->setMeta(Wajub\PrestaShop\Order\Recounts::DUE, (string) (time() - 1));
+                    $services->payments()->save($record);
+                }
+            }
+            $services->recountHint()->set(time() - 1);
+        }
+        Configuration::resetStaticCache();
+        $due = [];
+        foreach ($services->payments()->uncounted(50) as $record) {
+            $due[$record->paymentId] = (int) $record->meta(Wajub\PrestaShop\Order\Recounts::DUE);
+        }
+        echo json_encode(['hint' => (int) Configuration::getGlobalValue(Settings::RECOUNT_AT), 'uncounted' => $due]) . "\n";
+        exit(0);
+
+    case 'voucher':
+        // A voucher code, as the merchant makes one in Catalog > Discounts:
+        // `amount` off the cart, tax included, once.
+        if ($argument === 'make') {
+            $rule = new CartRule();
+            $rule->code = 'WAJUBTEST' . strtoupper(substr(md5((string) microtime(true)), 0, 8));
+            $rule->name = [(int) Configuration::get('PS_LANG_DEFAULT') => 'Wajub test voucher'];
+            foreach (Language::getIDs(false) as $idLang) {
+                $rule->name[(int) $idLang] = 'Wajub test voucher';
+            }
+            $rule->reduction_amount = (float) ($argv[3] ?? 0);
+            $rule->reduction_tax = true;
+            $rule->reduction_currency = (int) Configuration::get('PS_CURRENCY_DEFAULT');
+            $rule->quantity = 1;
+            $rule->quantity_per_user = 1;
+            $rule->date_from = date('Y-m-d H:i:s', time() - 86400);
+            $rule->date_to = date('Y-m-d H:i:s', time() + 86400);
+            $rule->active = true;
+            $rule->add();
+            echo $rule->code . "\n";
+            exit(0);
+        }
+        $id = (int) CartRule::getIdByCode((string) ($argv[3] ?? ''));
+        if ($id > 0) {
+            (new CartRule($id))->delete();
+        }
+        echo "removed\n";
+        exit(0);
+
+    case 'array-hook':
+        // Another module on the refund forms' hook that reads the products
+        // to refund as the array they are (count(), array_map()), installed
+        // after Wajub: PrestaShop puts it after Wajub on the hook, where it
+        // would meet Wajub's refusal (Refund\RefusedRefund) instead of them.
+        $dir = _PS_MODULE_DIR_ . 'wajubarrayhook';
+        if ($argument === 'write') {
+            @mkdir($dir);
+            file_put_contents($dir . '/wajubarrayhook.php', <<<'MODULE'
+<?php
+if (!defined('_PS_VERSION_')) {
+    exit;
+}
+class WajubArrayHook extends Module
+{
+    public function __construct()
+    {
+        $this->name = 'wajubarrayhook';
+        $this->tab = 'others';
+        $this->version = '1.0.0';
+        $this->author = 'Wajub tests';
+        $this->need_instance = 0;
+        $this->ps_versions_compliancy = ['min' => '8.0.0', 'max' => _PS_VERSION_];
+        parent::__construct();
+        $this->displayName = 'Wajub tests: products as an array';
+        $this->description = 'Counts the products of a refund of the order page.';
+    }
+
+    public function install()
+    {
+        return parent::install() && $this->registerHook('actionBeforeUpdateCancelProductFormHandler');
+    }
+
+    public function hookActionBeforeUpdateCancelProductFormHandler($params)
+    {
+        $products = $params['form_data']['products'] ?? [];
+        $ids = array_map(static function ($product) { return is_object($product) && method_exists($product, 'getOrderDetailId') ? $product->getOrderDetailId() : 0; }, $products);
+        Configuration::updateGlobalValue('WAJUBARRAYHOOK_SEEN', 'array of ' . count($products) . ': ' . implode(',', $ids));
+    }
+}
+MODULE);
+            echo "written\n";
+            exit(0);
+        }
+        if ($argument === 'position') {
+            Cache::clean('*');
+            $hook = (int) Hook::getIdByName('actionBeforeUpdateCancelProductFormHandler');
+            $shop = (int) Context::getContext()->shop->id;
+            $last = (int) Db::getInstance()->getValue('SELECT id_module FROM `' . _DB_PREFIX_ . 'hook_module` WHERE id_hook = ' . $hook . ' AND id_shop = ' . $shop . ' ORDER BY position DESC, id_module DESC', false);
+            $count = (int) Db::getInstance()->getValue('SELECT COUNT(*) FROM `' . _DB_PREFIX_ . 'hook_module` WHERE id_hook = ' . $hook . ' AND id_shop = ' . $shop, false);
+            echo ($last === (int) Module::getModuleIdByName('wajub') ? 'last' : 'not last') . ' of ' . $count . "\n";
+            exit(0);
+        }
+        if ($argument === 'seen') {
+            Configuration::loadConfiguration();
+            echo (string) Configuration::getGlobalValue('WAJUBARRAYHOOK_SEEN') . "\n";
+            exit(0);
+        }
+        Configuration::deleteByName('WAJUBARRAYHOOK_SEEN');
+        // With the config.xml PrestaShop writes as it lists the module.
+        foreach (glob($dir . '/*') ?: [] as $file) {
+            @unlink($file);
+        }
+        @rmdir($dir);
+        echo (is_dir($dir) || Module::isInstalled('wajubarrayhook') ? 'still there' : 'removed') . "\n";
+        exit(0);
+
+    case 'save-endpoint':
+        (new Services(Scope::allShops(), '1.0.0'))->settings()->setWebhookEndpoint('sandbox', ['id' => $argument, 'url' => (string) ($argv[3] ?? ''), 'at' => time()]);
+        echo "saved\n";
+        exit(0);
+
+    case 'version':
+        Cache::clean('*');
+        echo json_encode([
+            'version' => (string) Db::getInstance()->getValue('SELECT version FROM `' . _DB_PREFIX_ . 'module` WHERE name = \'wajub\'', false),
+            'recount_page' => (int) Db::getInstance()->getValue('SELECT COUNT(*) FROM `' . _DB_PREFIX_ . 'meta` WHERE page = \'module-wajub-recount\'', false),
+        ]) . "\n";
+        exit(0);
+
+    case 'group':
+        $orders = new Wajub\PrestaShop\Order\PrestaShopOrders();
+        $view = $orders->find((int) $argument);
+        echo json_encode(['ids' => $view !== null ? $view->ids : [], 'lead' => $orders->leadId((int) $argument), 'total' => $view !== null ? $view->total : 0, 'reference' => $view !== null ? $view->reference : '']) . "\n";
+        exit(0);
+
+    case 'notices':
+        $services = new Services(Scope::allShops(), Wajub::VERSION);
+        $settings = $services->settings();
+        $value = (string) ($argv[3] ?? '');
+        $sandboxKey = 'sk_test.integration' . str_repeat('k', 80);
+        $liveKey = 'sk.integration' . str_repeat('l', 80);
+        switch ($argument) {
+            case 'keys':
+                // none, sandbox (the stand-in's), live-only (Sandbox chosen, a
+                // live key alone), live-missing (Live chosen, a sandbox key
+                // alone), live (both keys, Live chosen).
+                $settings->setSecretKey('sandbox', in_array($value, ['sandbox', 'live-missing', 'live'], true) ? $sandboxKey : '');
+                $settings->setSecretKey('live', in_array($value, ['live-only', 'live'], true) ? $liveKey : '');
+                $settings->setEnvironment(in_array($value, ['live-missing', 'live'], true) ? 'live' : 'sandbox');
+                echo $settings->environment() . "\n";
+                break;
+            case 'task':
+                $now = time();
+                $since = ['never' => $now - 4 * 3600, 'late' => $now - 30 * 86400, 'now' => $now - 30 * 86400, 'clear' => 0][$value] ?? 0;
+                $last = ['never' => 0, 'late' => $now - 5 * 3600, 'now' => $now, 'clear' => 0][$value] ?? 0;
+                Configuration::updateGlobalValue(Settings::TASK_SINCE, (string) $since);
+                Configuration::updateGlobalValue(Settings::TASK_LAST_RUN, (string) $last);
+                echo $value . "\n";
+                break;
+            case 'methods':
+                foreach (['mobile_money', 'card', 'other'] as $kind) {
+                    $settings->setMethodEnabled($kind, $value === 'on');
+                }
+                echo $value . "\n";
+                break;
+            case 'currencies':
+                $module = Module::getInstanceByName('wajub');
+                Db::getInstance()->delete('module_currency', 'id_module = ' . (int) $module->id);
+                if ($value === 'all' && $module instanceof PaymentModule) {
+                    $module->addCheckboxCurrencyRestrictionsForModule();
+                }
+                echo (int) Db::getInstance()->getValue('SELECT COUNT(*) FROM `' . _DB_PREFIX_ . 'module_currency` WHERE id_module = ' . (int) $module->id, false) . "\n";
+                break;
+            case 'unhide':
+                Db::getInstance()->delete(DbStateStore::TABLE, '`name` LIKE \'notices_hidden:%\'');
+                echo "shown\n";
+                break;
+            case 'state':
+                $hidden = [];
+                foreach (Db::getInstance()->executeS('SELECT `name`, `value` FROM `' . _DB_PREFIX_ . DbStateStore::TABLE . '` WHERE `name` LIKE \'notices_hidden:%\'', true, false) ?: [] as $row) {
+                    $hidden[(string) $row['name']] = json_decode((string) $row['value'], true);
+                }
+                echo json_encode([
+                    'last_run' => (int) Configuration::getGlobalValue(Settings::TASK_LAST_RUN),
+                    'since' => (int) Configuration::getGlobalValue(Settings::TASK_SINCE),
+                    'hidden' => $hidden,
+                    'now' => time(),
+                ]) . "\n";
+                break;
+            case 'profiles':
+                // What an employee is shown, by what their profile may do on
+                // the module's settings: `read` alone, or `update` too. Two
+                // profiles of their own, removed after (PrestaShop keeps the
+                // rights of a profile once read).
+                $shown = [];
+                foreach (['read' => ['READ'], 'update' => ['READ', 'UPDATE']] as $name => $rights) {
+                    $profile = new Profile();
+                    $profile->name = [(int) Configuration::get('PS_LANG_DEFAULT') => 'Wajub integration ' . $name];
+                    $profile->add();
+                    foreach ($rights as $right) {
+                        $role = (int) Db::getInstance()->getValue('SELECT id_authorization_role FROM `' . _DB_PREFIX_ . 'authorization_role` WHERE slug = \'ROLE_MOD_TAB_ADMINWAJUBCONFIGURATION_' . $right . '\'', false);
+                        Db::getInstance()->insert('access', ['id_profile' => (int) $profile->id, 'id_authorization_role' => $role]);
+                    }
+                    $employee = new Employee();
+                    $employee->id_profile = (int) $profile->id;
+                    Context::getContext()->employee = $employee;
+                    $module = new Wajub();
+                    $answer = $module->adminNotices();
+                    $shown[$name] = [
+                        'notices' => array_column($answer['notices'], 'id'),
+                        'badge' => $answer['badge'],
+                        'allowed' => $module->settingsPageAllowed($employee),
+                        'editable' => $module->settingsEditable($employee),
+                    ];
+                    Db::getInstance()->delete('access', 'id_profile = ' . (int) $profile->id);
+                    $profile->delete();
+                }
+                echo json_encode($shown) . "\n";
+                break;
+            case 'uninstall-text':
+                echo Module::getInstanceByName('wajub')->confirmUninstall . "\n";
+                break;
+            case 'https':
+                // PrestaShop's SSL settings for this run only (its cache, not
+                // the database: the back office of the test shop is served
+                // over http), then the address Wajub would send payers back
+                // to, built as Checkout\PrestaShopStorefront builds it (no
+                // scheme imposed), against what the module says of it.
+                [$ssl, $allPages] = array_map('intval', explode(',', $value . ',0'));
+                Configuration::set('PS_SSL_ENABLED', (string) $ssl);
+                Configuration::set('PS_SSL_ENABLED_EVERYWHERE', (string) $allPages);
+                $idShop = (int) Configuration::get('PS_SHOP_DEFAULT');
+                $return = (string) (new Link())->getModuleLink('wajub', 'return', ['id_order' => 1, 'token' => 'x'], null, null, $idShop);
+                $view = new Wajub\PrestaShop\Admin\ConfigurationView($services);
+                echo json_encode([
+                    'return' => (string) parse_url($return, PHP_URL_SCHEME),
+                    'https' => $services->shop()->returnsOverHttps(),
+                    'warning' => $view->plainHttp(true),
+                ]) . "\n";
+                break;
+            default:
+                echo "unknown notices {$argument}\n";
+                exit(2);
+        }
+        exit(0);
 
     default:
         echo "unknown mode {$mode}\n";

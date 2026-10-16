@@ -29,13 +29,18 @@ use Wajub\PrestaShop\Connection\KeyReminders;
 use Wajub\PrestaShop\Http\CurlTransport;
 use Wajub\PrestaShop\Http\Transport;
 use Wajub\PrestaShop\Order\Cleanup;
+use Wajub\PrestaShop\Order\ConfigRecountHint;
+use Wajub\PrestaShop\Order\ConfigTaskLog;
 use Wajub\PrestaShop\Order\HeldConfirmations;
 use Wajub\PrestaShop\Order\Instalments;
 use Wajub\PrestaShop\Order\Ledger;
 use Wajub\PrestaShop\Order\OpenPayments;
 use Wajub\PrestaShop\Order\PrestaShopOrders;
+use Wajub\PrestaShop\Order\RecountHint;
+use Wajub\PrestaShop\Order\Recounts;
 use Wajub\PrestaShop\Order\Settlement;
 use Wajub\PrestaShop\Order\ShopOrders;
+use Wajub\PrestaShop\Order\TaskLog;
 use Wajub\PrestaShop\Pairing\KeyOrigins;
 use Wajub\PrestaShop\Pairing\Pairing;
 use Wajub\PrestaShop\Pairing\PairingClient;
@@ -104,7 +109,7 @@ final class Services
     private $servicesFor;
 
     /**
-     * @param array<string, object> $given stand-ins, by the name of the method that would build them: transport, state, configStore, cipher, translator, logger, shop, events, payments, refunds, orders, lock, money, storefront, heldConfirmations, mailer
+     * @param array<string, object> $given stand-ins, by the name of the method that would build them: transport, state, configStore, cipher, translator, logger, shop, events, payments, refunds, orders, lock, money, storefront, heldConfirmations, mailer, recountHint, taskLog
      */
     public function __construct(Scope $scope, string $moduleVersion, array $given = [])
     {
@@ -355,8 +360,8 @@ final class Services
 
     public function lock(): Lock
     {
-        return $this->once('lock', static function (): Lock {
-            return new DbLock();
+        return $this->once('lock', function (): Lock {
+            return new DbLock($this->logger());
         });
     }
 
@@ -391,7 +396,7 @@ final class Services
     public function settlement(): Settlement
     {
         return $this->once('settlement', function (): Settlement {
-            return new Settlement($this->orders(), $this->payments(), $this->refunds(), $this->ledger(), $this->clientOf(), $this->state(), $this->translator(), $this->money(), $this->logger(), $this->settings()->partialState());
+            return new Settlement($this->orders(), $this->payments(), $this->refunds(), $this->ledger(), $this->clientOf(), $this->state(), $this->translator(), $this->money(), $this->logger(), $this->settings()->partialState(), $this->recountHint());
         });
     }
 
@@ -439,7 +444,7 @@ final class Services
     public function release(): Release
     {
         return $this->once('release', function (): Release {
-            return new Release($this->orders(), $this->payments(), $this->openPayments(), $this->ledger(), $this->storefront(), $this->translator(), $this->logger());
+            return new Release($this->orders(), $this->payments(), $this->openPayments(), $this->ledger(), $this->storefront(), $this->translator(), $this->logger(), $this->heldConfirmations());
         });
     }
 
@@ -473,7 +478,36 @@ final class Services
     public function cleanup(callable $servicesFor): Cleanup
     {
         return $this->once('cleanup', function () use ($servicesFor): Cleanup {
-            return new Cleanup($servicesFor, $this->orders(), $this->payments(), $this->state(), $this->lock(), $this->logger(), $this->settings()->awaitingState());
+            return new Cleanup($servicesFor, $this->orders(), $this->payments(), $this->state(), $this->recounts($servicesFor), $this->logger(), $this->settings()->awaitingState());
+        });
+    }
+
+    /**
+     * The payments that could not count, read again a few minutes later
+     * (Order\Recounts), each with the services of its own shop.
+     *
+     * @param callable(int): Services $servicesFor the services of a shop (Wajub::servicesFor())
+     */
+    public function recounts(callable $servicesFor): Recounts
+    {
+        return $this->once('recounts', function () use ($servicesFor): Recounts {
+            return new Recounts($servicesFor, $this->payments(), $this->state(), $this->recountHint(), $this->logger());
+        });
+    }
+
+    /** When the soonest payment that could not count is due to be read again: one for all shops. */
+    public function recountHint(): RecountHint
+    {
+        return $this->once('recountHint', static function (): RecountHint {
+            return new ConfigRecountHint();
+        });
+    }
+
+    /** When the scheduled task last ran, for the back office's notices: one for all shops. */
+    public function taskLog(): TaskLog
+    {
+        return $this->once('taskLog', static function (): TaskLog {
+            return new ConfigTaskLog();
         });
     }
 

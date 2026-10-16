@@ -42,7 +42,7 @@
 
 set -euo pipefail
 
-MAJOR="${1:?usage: run-payment.sh <8|9>}"
+MAJOR="${1:?usage: run-payment.sh <81|8|9>}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ENV_DIR="${WAJUB_PS_ENV:-$HOME/.cache/wajub-prestashop/env}"
 source "$ENV_DIR/lib.sh"
@@ -61,7 +61,7 @@ json() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(eval(sys.arg
 CHECKS="wajub-checks-ps$MAJOR.php"
 shop_checks() { cp "$ROOT/tests/integration/checks.php" "$SHARE_DIR/$CHECKS"; "$ENV_DIR/exec.sh" "$MAJOR" php "/wajub-share/$CHECKS" "$@"; }
 
-if [ "$MAJOR" = 8 ]; then FO="$PS_URL/en"; else FO="$PS_URL"; fi
+if [ "$PS_FAMILY" = 8 ]; then FO="$PS_URL/en"; else FO="$PS_URL"; fi
 jar="$(mktemp -p "$LOG_DIR" wajub-pay-jar.XXXXXX)"
 bo_jar="$(mktemp -p "$LOG_DIR" wajub-pay-bo.XXXXXX)"
 STUB_PID=""
@@ -153,7 +153,13 @@ contains "the payment step is the current one" "$(grep -A2 'checkout-payment-ste
 contains "Mobile Money is offered, with its form" "$page" 'data-wajub-form="mobile_money"'
 contains "Card is offered, with its form" "$page" 'data-wajub-form="card"'
 contains "Other payment methods is offered (the account has PayPal)" "$page" 'Other payment methods'
-contains "the logos beside each option" "$page" 'data:image/svg+xml;base64,'
+contains "the logos beside each option: one picture, a file PrestaShop's img/tmp serves" "$page" '/img/tmp/wajub-logos-'
+lacks "never as data: written in the page" "$page" 'data:image/svg+xml'
+STRIP="$(grep -oE 'src="[^"]*/img/tmp/wajub-logos-[0-9a-f]{20}\.svg"' <<<"$page" | head -1 | sed 's/^src="//; s/"$//')"
+strip="$(curl -s --max-time 60 -w '\n%{http_code} %{content_type}' "$STRIP")"
+contains "the picture is served, as SVG" "$(tail -1 <<<"$strip")" '200 image/svg+xml'
+contains "it names its brands" "$strip" '<title>MTN Mobile Money, Orange Money</title>'
+lacks "and loads nothing else" "$strip" 'href="http'
 contains "the form's script" "$page" 'views/js/checkout-fields.js'
 contains "Wajub.js (the stand-in, in debug mode)" "$page" "/wajub.js"
 contains "and its configuration" "$page" 'var wajubFields'
@@ -278,7 +284,7 @@ expect "back from Wajub's page" "${where%% *}" 302
 contains "to the checkout" "$where" '/order'
 order="$(shop_checks order "$ORDER" | tail -1)"
 expect "the order is cancelled" "$(json 'd["state"]' <<<"$order")" "$CANCELED"
-contains "noted for the merchant" "$order" 'without paying'
+contains "noted for the merchant, why in words" "$order" 'without paying (the payment was cancelled)'
 page="$(curl -s -c "$jar" -b "$jar" "$FO/order")"
 CONFIG="$(fields_config <<<"$page")"
 NEWCART="$(json 'd["cart"]' <<<"$CONFIG")"
@@ -300,9 +306,15 @@ answer="$(post_json -d "ajax=1&reason=switch" "$RELEASE")"
 contains "the payer leaves the payment: back to the checkout" "$answer" '"to":"checkout"'
 expect "the payment is cancelled with Wajub" "$(json 'd["status"]' <<<"$(stub_payment "$PAYMENT")")" cancelled
 expect "the order is cancelled" "$(json 'd["state"]' <<<"$(shop_checks order "$ORDER" | tail -1)")" "$CANCELED"
-page="$(curl -s -c "$jar" -b "$jar" "$FO/order")"
-contains "the cart back, said so" "$page" 'Your cart is back: choose another payment method.'
-expect "no confirmation e-mail for an order never paid" "$(shop_checks held "$ORDER" | tail -1)" held
+BACK="$(json 'd["data"]["url"]' <<<"$answer")"
+contains "the script is sent through the module, which keeps the message for the page" "$BACK" 'notice='
+page="$(curl -sL -c "$jar" -b "$jar" "$BACK")"
+contains "the cart back, said so on the checkout (PrestaShop's notifications)" "$page" 'Your cart is back: choose another payment method.'
+page="$(curl -sL -c "$jar" -b "$jar" "$BACK")"
+lacks "said once: the address said it" "$page" 'Your cart is back: choose another payment method.'
+expect "no confirmation e-mail for an order never paid: the one held is forgotten, never to be sent" "$(shop_checks held "$ORDER" | tail -1)" none
+expect "never sent: the order was never paid" "$(json 'str(d["state"] in d["history"] and '"$PAID"' not in d["history"])' <<<"$(shop_checks order "$ORDER" | tail -1)")" True
+contains "the merchant reads why in words" "$(shop_checks order "$ORDER" | tail -1)" 'without paying (they chose another payment method)'
 
 section "A second tab places the same cart with another method"
 page="$(payment_step)"
@@ -332,7 +344,7 @@ add_product 1
 
 section "The order page in the back office"
 login_page="$(curl -sL -c "$bo_jar" -b "$bo_jar" --max-time 120 "$PS_ADMIN_URL")"
-if [ "$MAJOR" = 8 ]; then
+if [ "$PS_FAMILY" = 8 ]; then
     curl -sL -c "$bo_jar" -b "$bo_jar" --max-time 120 -o /dev/null --data-urlencode "email=$ADMIN_EMAIL" --data-urlencode "passwd=$ADMIN_PASSWORD" -d submitLogin=1 "${PS_ADMIN_URL}index.php?controller=AdminLogin"
     ORDERS_TOKEN="$(php_in_shop 'define("_PS_ADMIN_DIR_", getcwd() . "/admin-dev"); require "config/config.inc.php"; echo Tools::getAdminToken("AdminOrders" . (int) Tab::getIdFromClassName("AdminOrders") . "1");' | tail -1)"
     CONFIG_TOKEN="$(php_in_shop 'define("_PS_ADMIN_DIR_", getcwd() . "/admin-dev"); require "config/config.inc.php"; echo Tools::getAdminToken("AdminWajubConfiguration" . (int) Tab::getIdFromClassName("AdminWajubConfiguration") . "1");' | tail -1)"

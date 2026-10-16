@@ -183,7 +183,9 @@ function pSQL($string, $htmlOK = false)
 /**
  * Answers the one query the adapters make of Configuration's table (its rows
  * for a name), and the database's named locks (Support\DbLock), which it
- * notes, as one connection holds them.
+ * notes, as one connection holds them: as MySQL 5.7 and MariaDB do, or, with
+ * `$mysql56`, as MySQL 5.6 does. `$others` are the locks other connections
+ * hold: a GET_LOCK of one of them times out.
  */
 final class Db
 {
@@ -192,6 +194,19 @@ final class Db
 
     /** @var array<string, int> the named locks the connection holds, and how many times */
     public static array $locks = [];
+
+    /** @var array<string, true> the named locks other connections hold */
+    public static array $others = [];
+
+    /**
+     * MySQL 5.6's named locks: one per connection. A GET_LOCK releases the
+     * lock the connection holds, whatever its name (the MySQL 5.6 manual,
+     * "GET_LOCK()": "a lock obtained with GET_LOCK() is released explicitly
+     * by executing RELEASE_LOCK() or implicitly when your session terminates
+     * [...] or when you execute a new GET_LOCK()"), and one taken twice is
+     * held once.
+     */
+    public static bool $mysql56 = false;
 
     public static function getInstance(): self
     {
@@ -204,21 +219,35 @@ final class Db
             throw new RuntimeException('Unexpected query: ' . $sql);
         }
         self::$lockQueries[] = $match[1];
-        // As MySQL 5.7 and MariaDB count them: each GET_LOCK of the same
-        // connection takes the lock once more, each RELEASE_LOCK once less.
         if ($match[1] === 'GET_LOCK') {
+            if (isset(self::$others[$match[2]])) {
+                return '0';
+            }
+            if (self::$mysql56) {
+                self::$locks = [$match[2] => 1];
+
+                return '1';
+            }
+            // As MySQL 5.7 and MariaDB count them: each GET_LOCK of the same
+            // connection takes the lock once more, each RELEASE_LOCK once less.
             self::$locks[$match[2]] = (self::$locks[$match[2]] ?? 0) + 1;
 
             return '1';
         }
         if (!isset(self::$locks[$match[2]])) {
-            return null;
+            return isset(self::$others[$match[2]]) ? '0' : null;
         }
         if (--self::$locks[$match[2]] === 0) {
             unset(self::$locks[$match[2]]);
         }
 
         return '1';
+    }
+
+    /** Whether another connection could take the lock `$name` now (5.6 or 5.7 alike). */
+    public static function free(string $name): bool
+    {
+        return !isset(self::$locks[$name]) && !isset(self::$others[$name]);
     }
 
     public function executeS($sql, $array = true, $useCache = true)

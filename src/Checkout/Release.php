@@ -11,11 +11,14 @@ declare(strict_types=1);
 
 namespace Wajub\PrestaShop\Checkout;
 
+use Wajub\PrestaShop\Api\Client;
+use Wajub\PrestaShop\Order\HeldConfirmations;
 use Wajub\PrestaShop\Order\Ledger;
 use Wajub\PrestaShop\Order\OpenPayments;
 use Wajub\PrestaShop\Order\OrderView;
 use Wajub\PrestaShop\Order\Settlement;
 use Wajub\PrestaShop\Order\ShopOrders;
+use Wajub\PrestaShop\Payment\PaymentRecord;
 use Wajub\PrestaShop\Payment\PaymentStore;
 use Wajub\PrestaShop\Support\Logger;
 use Wajub\PrestaShop\Support\Translator;
@@ -76,7 +79,10 @@ final class Release
     /** @var Logger */
     private $logger;
 
-    public function __construct(ShopOrders $orders, PaymentStore $payments, OpenPayments $open, Ledger $ledger, Storefront $storefront, Translator $t, Logger $logger)
+    /** @var HeldConfirmations */
+    private $confirmations;
+
+    public function __construct(ShopOrders $orders, PaymentStore $payments, OpenPayments $open, Ledger $ledger, Storefront $storefront, Translator $t, Logger $logger, HeldConfirmations $confirmations)
     {
         $this->orders = $orders;
         $this->payments = $payments;
@@ -85,6 +91,7 @@ final class Release
         $this->storefront = $storefront;
         $this->t = $t;
         $this->logger = $logger;
+        $this->confirmations = $confirmations;
     }
 
     /**
@@ -138,10 +145,18 @@ final class Release
             case OpenPayments::UNCHECKED:
                 return $this->unchecked();
         }
-        // Ended on its own (refused, expired, cancelled on Wajub's page):
-        // the payer reads why, unless they chose to pay another way.
+        // Ended on its own (refused, expired, cancelled on Wajub's page or
+        // on the payer's phone): the payer reads why, unless they chose to
+        // pay another way, as Wajub says it, not as the payment form did
+        // (Wajub.js shows a payment cancelled on the phone as failed). One
+        // settled before the payer left (by the status the page follows, or
+        // its webhook) was not read again: as it was recorded then.
         if ($current !== null && $reason !== 'switch' && !in_array($current->paymentId, $settled['cancelled'], true)) {
             $ended = $settled['statuses'][$current->paymentId] ?? '';
+            if ($ended === '') {
+                $known = $this->payments->find($current->paymentId);
+                $ended = $known !== null && $known->state === PaymentRecord::FINAL && Client::isFailedStatus($known->status) ? $known->status : '';
+            }
             if ($ended !== '' && $ended !== 'gone') {
                 $reason = self::reasonOf($ended);
             }
@@ -154,10 +169,12 @@ final class Release
             return $confirmation;
         }
 
+        // The merchant reads why in words, never the scripts' code.
+        $why = self::why($reason, $this->t);
         if (!$handOver) {
             $this->orders->note($order, 'kept_' . md5((string) ($current !== null ? $current->paymentId : '')), $current !== null
-                ? $this->t->trans('The customer left Wajub payment %payment% without paying (%reason%), signed out or in another browser: the order could not be given back to them as a cart, and was left as it is. Cancel it if it is not paid.', ['%payment%' => $current->paymentId, '%reason%' => $reason], 'Modules.Wajub.Admin')
-                : $this->t->trans('The customer left the payment without paying (%reason%), signed out or in another browser: the order could not be given back to them as a cart, and was left as it is. Cancel it if it is not paid.', ['%reason%' => $reason], 'Modules.Wajub.Admin'));
+                ? $this->t->trans('The customer left Wajub payment %payment% without paying (%reason%), signed out or in another browser: the order could not be given back to them as a cart, and was left as it is. Cancel it if it is not paid.', ['%payment%' => $current->paymentId, '%reason%' => $why], 'Modules.Wajub.Admin')
+                : $this->t->trans('The customer left the payment without paying (%reason%), signed out or in another browser: the order could not be given back to them as a cart, and was left as it is. Cancel it if it is not paid.', ['%reason%' => $why], 'Modules.Wajub.Admin'));
             $this->logger->info('Order kept: its cart cannot reach this visitor', ['order' => $order->id, 'reason' => $reason]);
 
             return ['to' => self::TO_CHECKOUT, 'url' => $this->storefront->checkout(), 'message' => CheckoutStrings::notRestored($this->t), 'tone' => 'error'];
@@ -165,8 +182,12 @@ final class Release
 
         $this->orders->setState($order, $this->orders->canceledState(), false);
         $this->orders->note($order, 'released', $current !== null
-            ? $this->t->trans('The customer left Wajub payment %payment% without paying (%reason%): the order was cancelled, and its cart given back to the customer to place the order again.', ['%payment%' => $current->paymentId, '%reason%' => $reason], 'Modules.Wajub.Admin')
-            : $this->t->trans('The customer left the payment without paying (%reason%): the order was cancelled, and its cart given back to the customer to place the order again.', ['%reason%' => $reason], 'Modules.Wajub.Admin'));
+            ? $this->t->trans('The customer left Wajub payment %payment% without paying (%reason%): the order was cancelled, and its cart given back to the customer to place the order again.', ['%payment%' => $current->paymentId, '%reason%' => $why], 'Modules.Wajub.Admin')
+            : $this->t->trans('The customer left the payment without paying (%reason%): the order was cancelled, and its cart given back to the customer to place the order again.', ['%reason%' => $why], 'Modules.Wajub.Admin'));
+        // Never paid from now on: the order placed again from its cart has a
+        // confirmation of its own. The one held for this order, with the
+        // customer's name, e-mail address and addresses, goes.
+        $this->confirmations->forgetOrder($order);
         $restored = $this->storefront->restoreCart($order);
         $this->logger->info('Order given back as a cart', ['order' => $order->id, 'reason' => $reason, 'restored' => $restored]);
 
@@ -189,6 +210,26 @@ final class Release
     private function unchecked(): array
     {
         return ['to' => self::STAY, 'url' => '', 'message' => $this->t->trans('We could not check your payment with Wajub. Please try again in a moment.', [], 'Modules.Wajub.Shop'), 'tone' => 'error'];
+    }
+
+    /**
+     * Why the payer left, as the merchant's note says it: `$reason` as
+     * leave() takes it, in words of the merchant's language.
+     */
+    public static function why(string $reason, Translator $t): string
+    {
+        switch ($reason) {
+            case 'switch':
+                return $t->trans('they chose another payment method', [], 'Modules.Wajub.Admin');
+            case 'cancelled':
+                return $t->trans('the payment was cancelled', [], 'Modules.Wajub.Admin');
+            case 'expired':
+                return $t->trans('the payment expired', [], 'Modules.Wajub.Admin');
+            case 'unavailable':
+                return $t->trans('the payment method could not take the order', [], 'Modules.Wajub.Admin');
+            default:
+                return $t->trans('the payment was declined or failed', [], 'Modules.Wajub.Admin');
+        }
     }
 
     /** The reason the payer reads for a payment that ended in this status. */

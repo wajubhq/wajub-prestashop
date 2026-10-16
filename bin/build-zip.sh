@@ -9,8 +9,9 @@
 # Builds wajub.zip, the module as PrestaShop Addons and a direct download
 # ship it: one top-level wajub/ folder, the module's own autoloader in
 # vendor/ (no dependency: Composer's development tools stay out), an
-# index.php in every folder, and nothing for developers (tests, tools,
-# notes, Composer's lock file).
+# index.php in every folder, the .htaccess that refuses a request for any
+# of its PHP files, and nothing for developers (tests, tools, notes,
+# Composer's lock file, the development part of composer.json).
 #
 #     bin/build-zip.sh            # writes ./wajub.zip
 #     bin/build-zip.sh out.zip    # writes it elsewhere
@@ -34,7 +35,7 @@ rm -rf "$STAGE"
 mkdir -p "$MODULE"
 
 # What the module is made of; everything else stays out.
-for path in wajub.php config.xml logo.png LICENSE index.php composer.json controllers mails src translations upgrade views; do
+for path in wajub.php config.xml logo.png LICENSE index.php .htaccess composer.json config controllers mails src translations upgrade views; do
     cp -R "$ROOT/$path" "$MODULE/$path"
 done
 # Notes for developers, wherever they are.
@@ -44,6 +45,10 @@ find "$MODULE" -name '*.md' -delete
 # development tools Composer installs in the repository never ship.
 (cd "$MODULE" && "$COMPOSER" dump-autoload --no-dev --classmap-authoritative --no-interaction --quiet)
 rm -f "$MODULE/vendor/composer/installed.json"
+# The composer.json that ships says what the module is and how its classes
+# load: not the developers' tools (require-dev) nor their commands
+# (scripts, which name bin/, not in the zip).
+"$PHP" -r '$f = $argv[1]; $c = json_decode((string) file_get_contents($f), true); unset($c["require-dev"], $c["scripts"], $c["config"]["sort-packages"]); file_put_contents($f, json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");' "$MODULE/composer.json"
 
 # An index.php in every folder, so no folder of the module can be listed.
 find "$MODULE" -type d | while read -r dir; do

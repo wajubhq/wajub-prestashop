@@ -29,8 +29,12 @@ declare(strict_types=1);
  * I. The payer's return (Checkout\ReturnFlow).
  * J. Two of everything at once.
  * L. Follow-ups.
+ * M. An order a cart that ships in several packages became: several
+ *    PrestaShop orders, one order for its payments, refunds and notes.
  * P. An order paid once, refunded or cancelled by the merchant since: never
  *    paid, counted toward or checked again.
+ * W. A payment's webhook leaves its order as a read of it does (the
+ *    plugin's run-webhook-tests.php I2.1).
  *
  * The refunds' scenarios (E, and the refunds of D) are in
  * run-refund-tests.php, the scheduled task's (F8, L1) in
@@ -46,6 +50,7 @@ require_once __DIR__ . '/fakes/money.php';
 use Wajub\PrestaShop\Admin\OrderPanel;
 use Wajub\PrestaShop\Api\Client;
 use Wajub\PrestaShop\Checkout\Release;
+use Wajub\PrestaShop\Order\Recounts;
 use Wajub\PrestaShop\Order\Settlement;
 use Wajub\PrestaShop\Payment\PaymentRecord;
 use Wajub\PrestaShop\Services;
@@ -871,7 +876,7 @@ money_order(966, 'trx_l4b');
 counted(966, 'trx_l4b', 4000);
 $GLOBALS['api']->next['POST /payments'] = [[422, ['message' => 'The amount is too small.']]];
 pay_rest($s, 966);
-check(noted(966, 'Wajub could not start the payment of the ' . fcfa(6000) . ' left to pay (' . fcfa(4000) . ' already received): The amount is too small.') === 1, 'L4: Wajub\'s own words: ' . notes_of(966));
+check(noted(966, 'Wajub could not start the payment of the ' . fcfa(6000) . ' left to pay (' . fcfa(4000) . ' already received): The amount is too small (HTTP 422)') === 1, 'L4: Wajub\'s own words, its status within them: ' . notes_of(966));
 check(str_contains($s->starter()->startFailureNote(new RuntimeException('boom'), $s->orders()->find(966), 10000.0, 0.0), 'Wajub could not start the payment: boom'), 'L4: a first payment says so');
 
 // L5 Wajub answers neither the close of a payment paid in instalments nor a
@@ -1045,6 +1050,444 @@ foreach ([1130 => FakeShopOrders::REFUNDED, 1131 => FakeShopOrders::CANCELED] as
     $history = count($GLOBALS['orders']->history);
     $left = $s->release()->leave($s->orders()->find($id), 'cancelled');
     check($left['to'] === Release::TO_CONFIRMATION && $GLOBALS['orders']->state($id) === $state && count($GLOBALS['orders']->history) === $history && $GLOBALS['storefront']->restored === [] && noted($id, 'was cancelled, and its cart given back') === 0, "P5: the payer leaving order {$id}, paid once: sent to its confirmation page, the order left as it is, no cart given back: " . json_encode($left));
+}
+
+// === Scenarios the plugin's runners have, ported for 1.0.1 ===============================
+
+// A1b Wajub's date of a payment is kept as it counts: what tells the payment
+// made last, which a refund takes back from first (run-refund-tests.php E2b).
+$s = money_shop();
+money_order(116, 'trx_a1b');
+apply_succeeded($s, 116, payment('trx_a1b', 116, 'succeeded', ['created_at' => '2026-10-15T08:30:00+00:00']), Settlement::SEEN_NOW);
+check((int) record('trx_a1b')->meta(PaymentRecord::MADE_AT) === (int) strtotime('2026-10-15T08:30:00+00:00') && record('trx_a1b')->madeAt() === (int) strtotime('2026-10-15T08:30:00+00:00'), 'A1b: Wajub\'s date of the payment is kept as it counts');
+money_order(117, 'trx_a1c', 10000.0, ['dateAdd' => '2026-10-15 07:00:00']);
+apply_succeeded($s, 117, payment('trx_a1c', 117), Settlement::SEEN_NOW);
+check(record('trx_a1c')->meta(PaymentRecord::MADE_AT) === '' && record('trx_a1c')->madeAt() === (int) strtotime('2026-10-15 07:00:00'), 'A1b: one that says no date: when the shop started it');
+
+// A10 An order its pages cannot be paid from (as the plugin's order on hold):
+// the note says what is left, never to pay it there.
+$s = money_shop();
+money_order(110, 'trx_a10');
+$GLOBALS['orders']->orders[110]['state'] = FakeShopOrders::CANCELED;
+apply_succeeded($s, 110, payment('trx_a10', 110, 'succeeded', ['amount_paid' => 4000]));
+check(noted(110, 'is left to pay') === 1 && noted(110, 'Pay the rest') === 0, 'A10: a cancelled order reads what is left, without "Pay the rest": ' . notes_of(110));
+money_order(118, 'trx_a10b', 10000.0);
+$GLOBALS['orders']->orders[118]['module'] = 'ps_checkpayment';
+apply_succeeded($s, 118, payment('trx_a10b', 118, 'succeeded', ['amount_paid' => 4000]));
+check(noted(118, 'is left to pay') === 1 && noted(118, 'Pay the rest') === 0, 'A10: and so does an order of another payment module: ' . notes_of(118));
+money_order(119, 'trx_a10c');
+apply_succeeded($s, 119, payment('trx_a10c', 119, 'succeeded', ['amount_paid' => 4000]));
+check(noted(119, 'is left to pay') === 1 && noted(119, 'Pay the rest') === 1, 'A10: one its pages can be paid from says where: ' . notes_of(119));
+
+// D4 A payment the order counts binds to it, whatever its delivery carries.
+$s = money_shop();
+money_order(402);
+counted(402, 'trx_d4p', 4000);
+money_payment(402, 'trx_d4r', ['amount' => 6000.0]);
+deliver($s, 'payment.succeeded', payment('trx_d4p', 402, 'succeeded', ['amount_paid' => 4000, 'reference' => 'Order #OLD-REF', 'metadata' => []]));
+check(held($s, 402) === 4000.0 && count($GLOBALS['orders']->paymentsOf(402)) === 1 && $s->payments()->current(402)->paymentId === 'trx_d4r' && noted(402, 'another order') === 0 && noted(402, 'second payment') === 0, 'D4: a counted payment still binds, counted once, the order\'s payment of the moment unchanged: ' . notes_of(402));
+
+// D14 Its refunds could not be read as its webhook came: read again a few
+// minutes later, Wajub not sending the delivery again (Order\Recounts),
+// once the shop's pages ask, without the scheduled task.
+$s = money_shop();
+money_order(412, 'trx_d14');
+$GLOBALS['api']->add('trx_d14', ['status' => 'succeeded', 'amount_paid' => 4000, 'metadata' => ['order_id' => '412']]);
+$GLOBALS['api']->next['GET /payments/trx_d14/refunds'] = [[503, []], [503, []]];
+$before = time();
+deliver($s, 'payment.succeeded', payment('trx_d14', 412, 'succeeded', ['amount_paid' => 4000]));
+$due = (int) record('trx_d14')->meta(Recounts::DUE);
+check($GLOBALS['orders']->paymentsOf(412) === [] && record('trx_d14')->state === PaymentRecord::UNCOUNTED && $due >= $before + Recounts::DELAY && $due <= time() + Recounts::DELAY && $GLOBALS['recountHint']->at === $due, 'D14: not counted, read again in a few minutes: ' . $due . ' ' . notes_of(412));
+check(noted(412, 'its refunds could not be read') === 0, 'D14: nothing noted yet');
+$recounts = $s->recounts(static fn (int $idShop): Services => $s);
+$GLOBALS['api']->calls();
+check(!$recounts->due($due - 1) && $recounts->run($due - 1) === 0 && sent() === '', 'D14: not before: no page asks, and a page asking all the same reads nothing');
+$GLOBALS['store']->add('recount_run', $due, 120);
+check($recounts->run($due) === 0 && sent() === '', 'D14: nor while another run is under way');
+check(!$recounts->due($due + 1) && $recounts->due($due + Recounts::AGAIN_AFTER), 'D14: the pages then ask again a minute later, not on every page meanwhile');
+$GLOBALS['store']->delete('recount_run');
+$due += Recounts::AGAIN_AFTER;
+check($recounts->due($due) && $recounts->run($due) === 1, 'D14: once due, the next page asks, and it is read again');
+check(held($s, 412) === 4000.0 && noted(412, 'is left to pay') === 1 && $GLOBALS['orders']->state(412) === FakeShopOrders::PARTIAL, 'D14: then counted: ' . notes_of(412));
+check($GLOBALS['recountHint']->at === 0 && !$recounts->due($due + 1) && $GLOBALS['store']->get('recount_run') === null, 'D14: nothing more is due: the pages stop asking');
+$GLOBALS['api']->calls();
+check($recounts->run($due + 10) === 0 && sent() === '', 'D14: and asking again reads nothing');
+// Still unread when due: the merchant is told, once, and it is read again
+// 15 minutes, then an hour, later; then the scheduled task alone reads it.
+$s = money_shop();
+money_order(417, 'trx_d14b');
+$GLOBALS['api']->add('trx_d14b', ['status' => 'succeeded', 'amount_paid' => 4000, 'metadata' => ['order_id' => '417']]);
+$GLOBALS['api']->next['GET /payments/trx_d14b/refunds'] = array_fill(0, 12, [503, []]);
+deliver($s, 'payment.succeeded', payment('trx_d14b', 417, 'succeeded', ['amount_paid' => 4000]));
+$due = (int) record('trx_d14b')->meta(Recounts::DUE);
+$recounts = $s->recounts(static fn (int $idShop): Services => $s);
+$recounts->run($due);
+check(record('trx_d14b')->state === PaymentRecord::UNCOUNTED && noted(417, 'its refunds could not be read') === 1 && (int) record('trx_d14b')->meta(Recounts::DUE) === $due + Recounts::RETRY_AFTER[0] && $GLOBALS['recountHint']->at === $due + Recounts::RETRY_AFTER[0], 'D14: still unread: the merchant is told, and it is read again 15 minutes later: ' . notes_of(417));
+$recounts->run($due + Recounts::RETRY_AFTER[0]);
+check((int) record('trx_d14b')->meta(Recounts::DUE) === $due + Recounts::RETRY_AFTER[0] + Recounts::RETRY_AFTER[1] && noted(417, 'its refunds could not be read') === 1, 'D14: then an hour later, the merchant told once');
+$recounts->run($due + Recounts::RETRY_AFTER[0] + Recounts::RETRY_AFTER[1]);
+check(record('trx_d14b')->meta(Recounts::DUE) === '' && $GLOBALS['recountHint']->at === 0 && record('trx_d14b')->state === PaymentRecord::UNCOUNTED && $s->payments()->uncounted(10) !== [], 'D14: then no more from the pages: the scheduled task and the order\'s page read it');
+$s->cleanup(static fn (int $idShop): Services => $s)->run($due + 2 * 86400);
+check(record('trx_d14b')->meta(Recounts::DUE) === '' && $GLOBALS['recountHint']->at === 0, 'D14: the scheduled task failing to read it again does not set the pages asking anew');
+// Each payment read once it is due, not before: of two, the first due only.
+$s = money_shop();
+money_order(419, 'trx_d14d');
+money_order(420, 'trx_d14e');
+foreach (['trx_d14d' => 419, 'trx_d14e' => 420] as $id => $order) {
+    $GLOBALS['api']->add($id, ['status' => 'succeeded', 'amount_paid' => 4000, 'metadata' => ['order_id' => (string) $order]]);
+    $GLOBALS['api']->next['GET /payments/' . $id . '/refunds'] = [[503, []], [503, []]];
+    deliver($s, 'payment.succeeded', payment($id, $order, 'succeeded', ['amount_paid' => 4000]));
+}
+$later = record('trx_d14e');
+$later->setMeta(Recounts::DUE, (string) ((int) record('trx_d14d')->meta(Recounts::DUE) + 600));
+$GLOBALS['payments']->save($later);
+$due = (int) record('trx_d14d')->meta(Recounts::DUE);
+$GLOBALS['api']->calls();
+$recounts = $s->recounts(static fn (int $idShop): Services => $s);
+check($recounts->run($due) === 1 && held($s, 419) === 4000.0 && record('trx_d14e')->state === PaymentRecord::UNCOUNTED && !in_array('GET /payments/trx_d14e/refunds', $GLOBALS['api']->sent(), true), 'D14: of two, the one due is read, the other not before its time: ' . sent());
+check($GLOBALS['recountHint']->at === $due + 600, 'D14: the pages ask again when the next is due');
+// A payment read again and again before it is due (the confirmation page
+// asks every few seconds) keeps its first due time.
+$s = money_shop();
+money_order(418, 'trx_d14c');
+$GLOBALS['api']->next['GET /payments/trx_d14c/refunds'] = array_fill(0, 4, [503, []]);
+$late = payment('trx_d14c', 418, 'succeeded', ['amount_paid' => 4000]);
+apply_succeeded($s, 418, $late);
+$due = (int) record('trx_d14c')->meta(Recounts::DUE);
+$GLOBALS['recountHint']->at = 0;
+apply_succeeded($s, 418, $late);
+check((int) record('trx_d14c')->meta(Recounts::DUE) === $due && $GLOBALS['recountHint']->at === 0, 'D14: read again before it is due: its due time stays');
+
+// D14, every read moves the payment on: the pages ask for it once per due
+// time, whatever comes of the read, never on every page.
+// Its order gone from the shop (deleted by a module): no longer due, and
+// nothing asked of Wajub.
+$s = money_shop();
+money_order(421, 'trx_d14_gone');
+$GLOBALS['api']->add('trx_d14_gone', ['status' => 'succeeded', 'amount_paid' => 4000, 'metadata' => ['order_id' => '421']]);
+$GLOBALS['api']->next['GET /payments/trx_d14_gone/refunds'] = [[503, []], [503, []]];
+deliver($s, 'payment.succeeded', payment('trx_d14_gone', 421, 'succeeded', ['amount_paid' => 4000]));
+$due = (int) record('trx_d14_gone')->meta(Recounts::DUE);
+unset($GLOBALS['orders']->orders[421]);
+$recounts = $s->recounts(static fn (int $idShop): Services => $s);
+$GLOBALS['api']->calls();
+check($recounts->run($due) === 0 && record('trx_d14_gone')->meta(Recounts::DUE) === '' && $GLOBALS['recountHint']->at === 0 && !$recounts->due($due + 86400), 'D14: a payment whose order is gone is due no more: the pages stop asking for it (hint ' . $GLOBALS['recountHint']->at . ', due ' . record('trx_d14_gone')->meta(Recounts::DUE) . ')');
+check(sent() === '', 'D14: and Wajub is asked nothing for it: ' . sent());
+$s->cleanup(static fn (int $idShop): Services => $s)->run($due + 86400);
+check(!$recounts->due($due + 86400 + 1) && $GLOBALS['recountHint']->at === 0, 'D14: nor once the scheduled task has run');
+// The read fails (an OrderPayment the shop cannot add): due again later as
+// one still unread, Wajub read once for it, however many pages ask.
+$s = money_shop();
+money_order(422, 'trx_d14_throw');
+$GLOBALS['api']->add('trx_d14_throw', ['status' => 'succeeded', 'amount_paid' => 4000, 'metadata' => ['order_id' => '422']]);
+$GLOBALS['api']->next['GET /payments/trx_d14_throw/refunds'] = [[503, []], [503, []]];
+deliver($s, 'payment.succeeded', payment('trx_d14_throw', 422, 'succeeded', ['amount_paid' => 4000]));
+$due = (int) record('trx_d14_throw')->meta(Recounts::DUE);
+$GLOBALS['orders']->failPayments = true;
+$recounts = $s->recounts(static fn (int $idShop): Services => $s);
+$GLOBALS['api']->calls();
+for ($i = 0; $i < 20; ++$i) {
+    $recounts->run($due + $i);
+}
+$reads = count(array_filter($GLOBALS['api']->sent(), static fn (string $route): bool => $route === 'GET /payments/trx_d14_throw'));
+check($reads === 1, 'D14: a read that fails: twenty pages asking within seconds read Wajub once, not ' . $reads . ' times');
+check((int) record('trx_d14_throw')->meta(Recounts::DUE) === $due + Recounts::RETRY_AFTER[0] && record('trx_d14_throw')->meta(Recounts::TRIES) === '1' && $GLOBALS['recountHint']->at === $due + Recounts::RETRY_AFTER[0], 'D14: and it is due again 15 minutes later, as one still unread: ' . record('trx_d14_throw')->meta(Recounts::DUE) . '/' . record('trx_d14_throw')->meta(Recounts::TRIES));
+$GLOBALS['orders']->failPayments = false;
+// The read fails before its order's lock is taken (the database gone as its
+// order's group is read): due again later all the same, Wajub asked nothing,
+// never on every page meanwhile.
+$s = money_shop();
+money_order(424, 'trx_d14_early');
+$GLOBALS['api']->add('trx_d14_early', ['status' => 'succeeded', 'amount_paid' => 4000, 'metadata' => ['order_id' => '424']]);
+$GLOBALS['api']->next['GET /payments/trx_d14_early/refunds'] = [[503, []], [503, []]];
+deliver($s, 'payment.succeeded', payment('trx_d14_early', 424, 'succeeded', ['amount_paid' => 4000]));
+$due = (int) record('trx_d14_early')->meta(Recounts::DUE);
+$GLOBALS['orders']->failLeadId = true;
+$recounts = $s->recounts(static fn (int $idShop): Services => $s);
+$GLOBALS['api']->calls();
+for ($i = 0; $i < 20; ++$i) {
+    $recounts->run($due + $i);
+}
+$GLOBALS['orders']->failLeadId = false;
+check(sent() === '' && (int) record('trx_d14_early')->meta(Recounts::DUE) === $due + Recounts::RETRY_AFTER[0] && record('trx_d14_early')->meta(Recounts::TRIES) === '1' && $GLOBALS['recountHint']->at === $due + Recounts::RETRY_AFTER[0], 'D14: a read that fails before its order\'s lock: due again 15 minutes later, Wajub asked nothing: ' . record('trx_d14_early')->meta(Recounts::DUE) . '/' . record('trx_d14_early')->meta(Recounts::TRIES) . ' ' . sent());
+// Payments whose reads ran out stay uncounted, for the scheduled task and
+// the order's page: however many there are, one due is still read when due.
+$s = money_shop();
+for ($i = 0; $i < 105; ++$i) {
+    money_order(2000 + $i, 'trx_d14_spent_' . $i);
+    $spent = record('trx_d14_spent_' . $i);
+    $spent->state = PaymentRecord::UNCOUNTED;
+    $spent->setMeta(Recounts::DUE, '');
+    $spent->setMeta(Recounts::TRIES, (string) (count(Recounts::RETRY_AFTER) + 1));
+    $s->payments()->save($spent);
+}
+money_order(425, 'trx_d14_late');
+$GLOBALS['api']->add('trx_d14_late', ['status' => 'succeeded', 'amount_paid' => 4000, 'metadata' => ['order_id' => '425']]);
+$GLOBALS['api']->next['GET /payments/trx_d14_late/refunds'] = [[503, []], [503, []]];
+deliver($s, 'payment.succeeded', payment('trx_d14_late', 425, 'succeeded', ['amount_paid' => 4000]));
+$due = (int) record('trx_d14_late')->meta(Recounts::DUE);
+check($due > 0 && count($s->payments()->uncounted(1000)) === 106 && $s->payments()->uncountedWith(Recounts::DUE, 10)[0]->paymentId === 'trx_d14_late', 'D14: 105 payments whose reads ran out, and the one due to be read again: the only one due: ' . json_encode([$due, count($s->payments()->uncounted(1000)), array_map(static fn (PaymentRecord $r): string => $r->paymentId, $s->payments()->uncountedWith(Recounts::DUE, 3)), record('trx_d14_late')->state]));
+$recounts = $s->recounts(static fn (int $idShop): Services => $s);
+$GLOBALS['api']->calls();
+check($recounts->due($due) && $recounts->run($due) === 1 && record('trx_d14_late')->state !== PaymentRecord::UNCOUNTED, 'D14: the pages read it when due, behind the 105 others, and it counts now: ' . sent());
+// Its order held by another request (its webhook, its payer): not read now,
+// none of its reads spent; the pages ask again a minute later, not on every
+// page meanwhile.
+$s = money_shop();
+money_order(423, 'trx_d14_busy');
+$GLOBALS['api']->add('trx_d14_busy', ['status' => 'succeeded', 'amount_paid' => 4000, 'metadata' => ['order_id' => '423']]);
+$GLOBALS['api']->next['GET /payments/trx_d14_busy/refunds'] = [[503, []], [503, []]];
+deliver($s, 'payment.succeeded', payment('trx_d14_busy', 423, 'succeeded', ['amount_paid' => 4000]));
+$due = (int) record('trx_d14_busy')->meta(Recounts::DUE);
+$GLOBALS['locks']->busy['order:423'] = true;
+$recounts = $s->recounts(static fn (int $idShop): Services => $s);
+$GLOBALS['api']->calls();
+check($recounts->run($due) === 0 && sent() === '' && (int) record('trx_d14_busy')->meta(Recounts::DUE) === $due && record('trx_d14_busy')->meta(Recounts::TRIES) === '', 'D14: its order held by another request: not read, its due time and its reads kept');
+check(!$recounts->due($due + Recounts::AGAIN_AFTER - 1) && $recounts->due($due + Recounts::AGAIN_AFTER), 'D14: the pages ask again a minute later, not on the next page: ' . $GLOBALS['recountHint']->at);
+unset($GLOBALS['locks']->busy['order:423']);
+check($recounts->run($due + Recounts::AGAIN_AFTER) === 1 && held($s, 423) === 4000.0, 'D14: then it is read, and counts');
+// More due than a run reads: the rest a minute later.
+$s = money_shop();
+$now = time() + 1000;
+for ($i = 0; $i < Recounts::PER_RUN + 2; ++$i) {
+    money_order(430 + $i, 'trx_d14_many_' . $i, 10000.0, ['state' => PaymentRecord::UNCOUNTED, 'status' => 'succeeded', 'amountPaid' => 4000.0]);
+    $GLOBALS['api']->add('trx_d14_many_' . $i, ['status' => 'succeeded', 'amount_paid' => 4000, 'metadata' => ['order_id' => (string) (430 + $i)]]);
+    $many = record('trx_d14_many_' . $i);
+    $many->setMeta(Recounts::DUE, (string) ($now - 10));
+    $GLOBALS['payments']->save($many);
+}
+$GLOBALS['recountHint']->set($now - 10);
+$recounts = $s->recounts(static fn (int $idShop): Services => $s);
+check($recounts->run($now) === Recounts::PER_RUN && $GLOBALS['recountHint']->at === $now + Recounts::AGAIN_AFTER, 'D14: more due than a run reads: ' . Recounts::PER_RUN . ' read, the rest a minute later (hint ' . $GLOBALS['recountHint']->at . ')');
+check($recounts->run($now + Recounts::AGAIN_AFTER) === 2 && $GLOBALS['recountHint']->at === 0, 'D14: then the rest, and the pages stop asking');
+// A payment that could not count meanwhile, saved and brought forward while
+// a run set the hint (between the run's read of the payments and its write),
+// is not lost: the run reads the payments again after its write.
+$s = money_shop();
+money_order(440, 'trx_d14_race_a', 10000.0, ['state' => PaymentRecord::UNCOUNTED, 'status' => 'succeeded', 'amountPaid' => 4000.0]);
+$GLOBALS['api']->add('trx_d14_race_a', ['status' => 'succeeded', 'amount_paid' => 4000, 'metadata' => ['order_id' => '440']]);
+$now = time() + 1000;
+$racing = record('trx_d14_race_a');
+$racing->setMeta(Recounts::DUE, (string) ($now - 10));
+$GLOBALS['payments']->save($racing);
+money_order(441, 'trx_d14_race_b', 10000.0, ['state' => PaymentRecord::UNCOUNTED, 'status' => 'succeeded', 'amountPaid' => 4000.0]);
+$hint = new class($GLOBALS['recountHint']) implements Wajub\PrestaShop\Order\RecountHint {
+    /** @var (callable(): void)|null what another request does just before the next set() lands */
+    public $before;
+
+    public function __construct(private MemoryRecountHint $hint)
+    {
+    }
+
+    public function get(): int
+    {
+        return $this->hint->get();
+    }
+
+    public function set(int $at): void
+    {
+        $before = $this->before;
+        $this->before = null;
+        if ($before !== null) {
+            $before();
+        }
+        $this->hint->set($at);
+    }
+
+    public function lower(int $at): void
+    {
+        $this->hint->lower($at);
+    }
+
+    public function postpone(int $until): void
+    {
+        $this->hint->postpone($until);
+    }
+};
+$GLOBALS['recountHint']->set($now - 10);
+$hint->before = static function () use ($now): void {
+    // Another request: payment trx_d14_race_b could not count, due in five minutes.
+    $other = record('trx_d14_race_b');
+    $other->setMeta(Recounts::DUE, (string) ($now + Recounts::DELAY));
+    $GLOBALS['payments']->save($other);
+    $GLOBALS['recountHint']->lower($now + Recounts::DELAY);
+};
+$recounts = new Recounts(static fn (int $idShop): Services => $s, $GLOBALS['payments'], $GLOBALS['store'], $hint, $GLOBALS['logger']);
+$recounts->run($now);
+check(held($s, 440) === 4000.0 && $GLOBALS['recountHint']->at === $now + Recounts::DELAY, 'D14: a payment that could not count while a run set the hint is still asked for when due: hint ' . $GLOBALS['recountHint']->at . ' (expected ' . ($now + Recounts::DELAY) . ')');
+// A run that outlasts its lease leaves the next run's lease alone.
+$s = money_shop();
+money_order(442, 'trx_d14_lease', 10000.0, ['state' => PaymentRecord::UNCOUNTED, 'status' => 'succeeded', 'amountPaid' => 4000.0]);
+$GLOBALS['api']->add('trx_d14_lease', ['status' => 'succeeded', 'amount_paid' => 4000, 'metadata' => ['order_id' => '442']]);
+$now = time() + 1000;
+$slow = record('trx_d14_lease');
+$slow->setMeta(Recounts::DUE, (string) ($now - 10));
+$GLOBALS['payments']->save($slow);
+$GLOBALS['recountHint']->set($now - 10);
+$recounts = $s->recounts(static function (int $idShop) use ($s): Services {
+    // Wajub slow to answer: the run's lease runs out, and the next run takes it.
+    $GLOBALS['store']->now = time() + 3600;
+    $GLOBALS['store']->add('recount_run', 'the next run', 600);
+
+    return $s;
+});
+$recounts->run($now);
+check($GLOBALS['store']->get('recount_run') === 'the next run', 'D14: a run that outlasted its lease leaves the next run\'s lease: ' . json_encode($GLOBALS['store']->get('recount_run')));
+$GLOBALS['store']->now = 0;
+$GLOBALS['store']->delete('recount_run');
+
+// F2 The rest under way: the confirmation page follows it, saying what was received.
+$s = money_shop();
+money_order(601);
+counted(601, 'trx_f2p', 4000);
+money_payment(601, 'trx_f2r', ['amount' => 6000.0]);
+$states = [FakeShopOrders::AWAITING, FakeShopOrders::PARTIAL, FakeShopOrders::ERROR];
+$panel = $s->statusAnswer()->confirmationPanel($s->orders()->find(601), $states);
+check($panel['panel'] === 'waiting' && spaced($panel['paid_so_far']) === fcfa(4000) . ' already received; ' . fcfa(6000) . ' left to pay.' && !$panel['can_pay'], 'F2: the rest under way is followed, with what was received: ' . json_encode($panel));
+money_order(602, 'trx_f2x');
+$panel = $s->statusAnswer()->confirmationPanel($s->orders()->find(602), $states);
+check($panel['panel'] === 'waiting' && $panel['paid_so_far'] === '', 'F2: an order that received nothing says nothing of it');
+money_order(605);
+counted(605, 'trx_f2s', 4000);
+$panel = $s->statusAnswer()->confirmationPanel($s->orders()->find(605), $states);
+check($panel['panel'] === 'partial' && $panel['can_pay'] && spaced($panel['paid_so_far']) === fcfa(4000) . ' already received; ' . fcfa(6000) . ' left to pay.', 'F2: nothing under way: what is left, and "Pay the rest"');
+mark_paid(605);
+check($s->statusAnswer()->confirmationPanel($s->orders()->find(605), $states)['panel'] === '', 'F2: a paid order: no panel');
+
+// I2 Back from a page of a payment counted already: nothing to read.
+$s = money_shop();
+money_order(901, 'trx_i2');
+counted(901, 'trx_i2', 4000);
+$GLOBALS['api']->calls();
+$landing = $s->returnFlow()->handle($s->orders()->find(901));
+check($landing['url'] === $GLOBALS['storefront']->confirmation($s->orders()->find(901)) && sent() === '' && $landing['message'] === '', 'I2: back from a payment counted already: to the order, no API call');
+
+// J3 One payment written twice (two requests each found none): counted once.
+$s = money_shop();
+money_order(951);
+counted(951, 'trx_j3', 4000);
+$twice = record('trx_j3');
+$twice->id = 0;
+$twice->counted = 9000.0;
+$refused = false;
+try {
+    $GLOBALS['payments']->save($twice);
+} catch (RuntimeException $e) {
+    $refused = true;
+}
+$GLOBALS['orders']->addPayment($s->orders()->find(951), 9000.0, 'trx_j3');
+check($refused && held($s, 951) === 4000.0 && count($s->ledger()->entries($s->orders()->find(951))) === 1, 'J3: a payment\'s second row is never written (payment_id is unique), nor a second PrestaShop payment of it counted');
+
+// === M. An order a cart that ships in several packages became ==========================
+// PrestaShop makes one order per package, under one reference: the module
+// reads them as one, by the first (OrderView), as PrestaShop's payment
+// modules see one payment for them (an OrderPayment of the reference).
+
+$s = money_shop();
+money_order(1200, 'trx_m1', 6000.0);
+money_order(1201, '', 4000.0);
+$GLOBALS['orders']->split(1200, 1201);
+$second = $s->orders()->find(1201);
+check($second !== null && $second->id === 1200 && $second->ids === [1200, 1201] && $second->total === 10000.0 && $s->orders()->leadId(1201) === 1200 && $s->orders()->leadId(1200) === 1200, 'M1: either order reads as the group, by its first, with the total of both: ' . json_encode($second));
+$GLOBALS['api']->add('trx_m1', ['status' => 'succeeded', 'amount' => 10000, 'metadata' => ['order_id' => '1201']]);
+deliver($s, 'payment.succeeded', payment('trx_m1', 1201, 'succeeded', ['amount' => 10000, 'metadata' => ['order_id' => '1201']]));
+check(is_paid(1200) && is_paid(1201) && count($GLOBALS['orders']->paymentsOf(1200)) === 1 && $GLOBALS['orders']->paymentsOf(1201) === [], 'M2: the payment of the whole cart, naming either order, pays both, one PrestaShop payment: ' . notes_of(1200));
+check(noted(1200, 'Wajub confirmed the payment') === 1 && notes_of(1201) === '' && (new OrderPanel($s))->view(1201)['notes'] === (new OrderPanel($s))->view(1200)['notes'] && (new OrderPanel($s))->view(1201)['payments'][0]['id'] === 'trx_m1', 'M3: one set of notes, under the first order; the second order\'s panel shows the group\'s payments and notes');
+// A refund of the second order's products: from the group's payments.
+$answer = $s->refundSync()->refundForSlip($s->orders()->find(1201), 3000.0);
+$made = $GLOBALS['api']->bodies('POST /refunds');
+check($answer['status'] === Wajub\PrestaShop\Refund\RefundSync::DONE && ($made[0]['payment'] ?? '') === 'trx_m1' && (float) ($made[0]['amount'] ?? 0) === 3000.0 && ($made[0]['metadata']['order_id'] ?? '') === '1200', 'M4: a refund of the second order is refunded from the group\'s payment: ' . json_encode($made));
+$GLOBALS['orders']->merchantSlip(1201, 3000.0);
+check($s->orders()->lastSlip($s->orders()->find(1200)) === $GLOBALS['orders']->lastSlip($s->orders()->find(1201)) && $s->orders()->refundedOnOrder($s->orders()->find(1200)) === 3000.0, 'M5: the slip of either order is the group\'s');
+// Part paid: "Pay the rest" from either order, for what the group lacks.
+$s = money_shop();
+money_order(1210, 'trx_m6', 6000.0);
+money_order(1211, '', 4000.0);
+$GLOBALS['orders']->split(1210, 1211);
+$GLOBALS['api']->add('trx_m6', ['status' => 'succeeded', 'amount' => 10000, 'amount_paid' => 4000, 'metadata' => ['order_id' => '1210']]);
+deliver($s, 'payment.succeeded', payment('trx_m6', 1210, 'succeeded', ['amount' => 10000, 'amount_paid' => 4000]));
+check($GLOBALS['orders']->state(1210) === FakeShopOrders::PARTIAL && $GLOBALS['orders']->state(1211) === FakeShopOrders::PARTIAL && due($s, 1211) === 6000.0, 'M6: part paid: both orders "Partially paid", 6 000 left for the group');
+// The amounts are the group's, which each order's page shows beside its
+// own total: the panel and the payer's line say so.
+$panel = (new OrderPanel($s))->view(1211);
+check(spaced($panel['group']) === 'Orders 1210, 1211 (reference R1210) are one cart shipped in several packages: the payments, amounts and notes here are those of them all.' && spaced($panel['left']) === fcfa(6000), 'M9: the panel of either order says its amounts are those of the group: ' . $panel['group']);
+check(spaced($s->statusAnswer()->payerLine($s->orders()->find(1211), 'live')) === fcfa(4000) . ' already received; ' . fcfa(6000) . ' left to pay, for all your orders of reference R1210 together.', 'M9: and so does the payer\'s line, on either order\'s page: ' . $s->statusAnswer()->payerLine($s->orders()->find(1211), 'live'));
+money_order(1212, 'trx_m9_alone', 10000.0);
+counted(1212, 'trx_m9_alone', 4000);
+check((new OrderPanel($s))->view(1212)['group'] === '' && spaced($s->statusAnswer()->payerLine($s->orders()->find(1212), 'live')) === fcfa(4000) . ' already received; ' . fcfa(6000) . ' left to pay.', 'M9: an order of its own says nothing of the kind');
+$GLOBALS['api']->calls();
+$answer = pay_rest($s, 1211);
+$created = $GLOBALS['api']->bodies('POST /payments')[0] ?? [];
+check($answer['ok'] && (float) ($created['amount'] ?? 0) === 6000.0 && ($created['metadata']['order_id'] ?? '') === '1210' && $s->payments()->current(1210)?->paymentId !== 'trx_m6' && $s->payments()->current(1211) === null, 'M6: "Pay the rest" from the second order: a payment of the group, for what is left: ' . json_encode($created));
+// "Check status", the scheduled task: the group, once.
+$s = money_shop();
+money_order(1220, 'trx_m7', 6000.0);
+money_order(1221, '', 4000.0);
+$GLOBALS['orders']->split(1220, 1221);
+$GLOBALS['api']->add('trx_m7', ['status' => 'succeeded', 'amount' => 10000, 'metadata' => ['order_id' => '1220']]);
+$data = (new OrderPanel($s))->check(1221);
+check(is_paid(1220) && is_paid(1221) && $data['reload'] && in_array('order:1220', $GLOBALS['locks']->taken, true) && !in_array('order:1221', $GLOBALS['locks']->taken, true), 'M7: "Check status" of the second order reads the group\'s payment, under the first order\'s lock: ' . $data['message']);
+check($GLOBALS['orders']->inState(FakeShopOrders::PAID, 10) === [1220 => $GLOBALS['orders']->orders[1220]['placed']], 'M8: the scheduled task lists the group once, by its first order');
+
+// === W. A payment's webhook leaves its order as a read of it does ======================
+
+/**
+ * The order `$id`, holding `$payment`, as one way of settling it leaves it:
+ * `deliver` its webhook as `$type` (`$delivered` its data), or `read` it
+ * from Wajub and settle it, as the payer's return, the status checks and
+ * "Check status" do. Its state, notes and PrestaShop payments.
+ *
+ * @param array<string, mixed> $payment as Wajub reads it
+ * @param array<string, mixed>|null $delivered what the delivery carries, $payment unless said
+ *
+ * @return array{state: int, notes: string, payments: int}
+ */
+function settled(string $how, int $id, array $payment, string $type, ?array $delivered = null, int $times = 1): array
+{
+    $s = money_shop();
+    money_order($id, (string) $payment['id']);
+    $GLOBALS['api']->add((string) $payment['id'], $payment);
+    for ($i = 0; $i < $times; ++$i) {
+        if ($how === 'deliver') {
+            deliver($s, $type, $delivered ?? $payment);
+        } else {
+            $record = $s->payments()->find((string) $payment['id']);
+            $s->settlement()->apply($s->orders()->find($id), $record, $s->settlement()->outcome($record, true), Settlement::SEEN_NOW);
+        }
+    }
+
+    return ['state' => $GLOBALS['orders']->state($id), 'notes' => notes_of($id), 'payments' => count($GLOBALS['orders']->paymentsOf($id))];
+}
+
+$paid = payment('trx_w1', 701);
+check(settled('deliver', 701, $paid, 'payment.succeeded') === settled('read', 701, $paid, 'payment.succeeded') && settled('read', 701, $paid, 'payment.succeeded')['notes'] === 'Wajub confirmed the payment (MTN Mobile Money).', 'W: a payment that went through: the webhook pays the order as a read does, with the note the other paths write');
+check(settled('deliver', 701, $paid, 'payment.succeeded', null, 3)['notes'] === 'Wajub confirmed the payment (MTN Mobile Money).' && settled('deliver', 701, $paid, 'payment.succeeded', null, 3)['payments'] === 1, 'W: delivered again: no second note, no second PrestaShop payment');
+$cancelled = payment('trx_w2', 702, 'canceled');
+$byWebhook = settled('deliver', 702, $cancelled, 'payment.canceled');
+check($byWebhook === settled('read', 702, $cancelled, 'payment.canceled') && $byWebhook['state'] === FakeShopOrders::AWAITING && str_contains($byWebhook['notes'], 'canceled') && !str_contains($byWebhook['notes'], 'did not go through'), 'W: a payment the payer cancelled: as a read leaves it, noted once, with its real status, not as refused: ' . json_encode($byWebhook));
+check(settled('deliver', 702, $cancelled, 'payment.canceled', null, 2)['notes'] === $byWebhook['notes'], 'W: its end delivered again adds no second note');
+$refused = payment('trx_w3', 703, 'failed', ['failure_message' => 'Insufficient balance']);
+$byWebhook = settled('deliver', 703, $refused, 'payment.failed');
+check($byWebhook === settled('read', 703, $refused, 'payment.failed') && $byWebhook['state'] === FakeShopOrders::ERROR && str_contains($byWebhook['notes'], 'did not go through') && str_contains($byWebhook['notes'], 'Reason: Insufficient balance'), 'W: a refused payment says why, as a read does: ' . json_encode($byWebhook));
+$expired = payment('trx_w4', 704, 'expired');
+$noStatus = $expired;
+unset($noStatus['status']);
+$byWebhook = settled('deliver', 704, $expired, 'payment.expired', $noStatus);
+check($byWebhook === settled('read', 704, $expired, 'payment.expired') && str_contains($byWebhook['notes'], 'expired'), 'W: a delivery without a status is named by its event, as a read names it: ' . json_encode($byWebhook));
+$short = payment('trx_w5', 705, 'succeeded', ['amount_paid' => 4000]);
+$byWebhook = settled('deliver', 705, $short, 'payment.succeeded');
+check($byWebhook === settled('read', 705, $short, 'payment.succeeded') && $byWebhook['state'] === FakeShopOrders::PARTIAL && str_contains($byWebhook['notes'], 'is left to pay'), 'W: a payment short of the total: "Partially paid", what is left, as a read says: ' . json_encode($byWebhook));
+// The events of a payment paid in instalments keep where it stands.
+$s = money_shop();
+money_order(706, 'trx_w6');
+deliver($s, 'payment.split.succeeded', payment('trx_w6', 706, 'partial', ['amount_paid' => 4000, 'split' => ['split_number' => 1, 'status' => 'succeeded']]));
+check(record('trx_w6')->status === 'partial' && record('trx_w6')->amountPaid === 4000.0 && $s->ledger()->instalmentsOpen($s->orders()->find(706)) !== null && $GLOBALS['orders']->state(706) === FakeShopOrders::AWAITING, 'W: an instalment cleared (payment.split.succeeded): the payment is kept between two instalments, never given back meanwhile');
+deliver($s, 'payment.split.processing', payment('trx_w6', 706, 'processing', ['amount_paid' => 4000]));
+check(record('trx_w6')->status === 'processing' && notes_of(706) === '', 'W: the next one with the payer (payment.split.processing): kept, nothing noted');
+deliver($s, 'payment.split.failed', payment('trx_w6', 706, 'partial', ['amount_paid' => 4000]));
+check(record('trx_w6')->status === 'partial' && $GLOBALS['orders']->state(706) === FakeShopOrders::AWAITING, 'W: an instalment declined (payment.split.failed), the payment still partial: kept, the order as it is');
+foreach (['payment.split.processing', 'payment.split.succeeded', 'payment.split.failed', 'payment.processing', 'payment.partial'] as $type) {
+    check((new PaymentEventHandler($s->payments(), static fn (int $idShop): Services => $s, $GLOBALS['logger']))->handles($type), "W: the payments' handler acts on {$type}");
 }
 
 done('remainder');

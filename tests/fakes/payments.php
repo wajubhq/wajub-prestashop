@@ -27,6 +27,7 @@ use Wajub\PrestaShop\Checkout\CartView;
 use Wajub\PrestaShop\Checkout\Storefront;
 use Wajub\PrestaShop\Checkout\Tokens;
 use Wajub\PrestaShop\Order\OrderView;
+use Wajub\PrestaShop\Order\RecountHint;
 use Wajub\PrestaShop\Order\ShopOrders;
 use Wajub\PrestaShop\Payment\DbRefundStore;
 use Wajub\PrestaShop\Payment\PaymentRecord;
@@ -101,6 +102,18 @@ final class MemoryPaymentStore implements PaymentStore
         foreach ($this->rows as $row) {
             if ($row->state === PaymentRecord::UNCOUNTED && $row->idOrder > 0 && !in_array($row->idOrder, $skip, true)) {
                 $found[] = clone $row;
+            }
+        }
+
+        return array_slice($found, 0, $limit);
+    }
+
+    public function uncountedWith(string $key, int $limit): array
+    {
+        $found = [];
+        foreach ($this->uncounted(PHP_INT_MAX) as $row) {
+            if ($row->meta($key) !== '') {
+                $found[] = $row;
             }
         }
 
@@ -369,11 +382,25 @@ final class FakeShopOrders implements ShopOrders
     /** @var array<int, array<string, string>> order id => key => message */
     public array $notes = [];
 
+    /**
+     * What PrestaShop runs as it saves a credit slip of the module's
+     * (actionObjectOrderSlipAddAfter): fn(order id, slip id), or null.
+     *
+     * @var callable|null
+     */
+    public $onSlipAdded;
+
     /** @var list<array{order: int, amount: float, id: int, wajub: bool}> credit slips: the merchant's (wajub false) and the module's */
     public array $slips = [];
 
     /** An OrderPayment that cannot be added: what a shop failing mid-way does. */
     public bool $failPayments = false;
+
+    /** leadId() fails: the database gone before an order's lock is taken. */
+    public bool $failLeadId = false;
+
+    /** @var array<int, list<int>> the orders a cart became, by the first one's id (split()) */
+    public array $groups = [];
 
     /**
      * An order as validateOrder() leaves it, in "Awaiting Wajub payment".
@@ -401,11 +428,46 @@ final class FakeShopOrders implements ShopOrders
         return $this->find($id);
     }
 
+    /**
+     * Makes `$others` orders of the same cart as `$lead`, as PrestaShop splits
+     * a cart that ships in several packages: one reference, one cart, each
+     * its own total, `$lead` the first.
+     */
+    public function split(int $lead, int ...$others): void
+    {
+        foreach ($others as $id) {
+            $this->orders[$id]['reference'] = $this->orders[$lead]['reference'];
+            $this->orders[$id]['cart'] = $this->orders[$lead]['cart'];
+        }
+        $this->groups[$lead] = array_merge([$lead], $others);
+    }
+
+    public function leadId(int $idOrder): int
+    {
+        if ($this->failLeadId) {
+            throw new RuntimeException('The database is gone.');
+        }
+        foreach ($this->groups as $lead => $ids) {
+            if (in_array($idOrder, $ids, true)) {
+                return $lead;
+            }
+        }
+
+        return $idOrder;
+    }
+
     public function find(int $idOrder): ?OrderView
     {
-        $o = $this->orders[$idOrder] ?? null;
-        if ($o === null) {
+        if (!isset($this->orders[$idOrder])) {
             return null;
+        }
+        // The group, by its first order, as PrestaShopOrders reads it.
+        $idOrder = $this->leadId($idOrder);
+        $ids = $this->groups[$idOrder] ?? [$idOrder];
+        $o = $this->orders[$idOrder];
+        $total = 0.0;
+        foreach ($ids as $id) {
+            $total += (float) $this->orders[$id]['total'];
         }
         $paid = in_array((int) $o['state'], self::PAID_STATES, true);
         $paidOnce = $paid;
@@ -415,7 +477,7 @@ final class FakeShopOrders implements ShopOrders
             }
         }
 
-        return new OrderView($idOrder, (string) $o['reference'], (int) $o['shop'], (int) $o['cart'], (int) $o['customer'], (int) $o['lang'], (string) $o['currency'], (float) $o['total'], (int) $o['state'], $paid, $paidOnce, (string) $o['module'], (string) $o['title'], (string) $o['secure_key'], [$idOrder]);
+        return new OrderView($idOrder, (string) $o['reference'], (int) $o['shop'], (int) $o['cart'], (int) $o['customer'], (int) $o['lang'], (string) $o['currency'], $total, (int) $o['state'], $paid, $paidOnce, (string) $o['module'], (string) $o['title'], (string) $o['secure_key'], $ids);
     }
 
     public function addPayment(OrderView $order, float $amount, string $transactionId): int
@@ -431,11 +493,14 @@ final class FakeShopOrders implements ShopOrders
 
     public function setState(OrderView $order, int $stateId, bool $mail): void
     {
-        if ((int) $this->orders[$order->id]['state'] === $stateId) {
-            return;
+        // Each order of the group, as PrestaShopOrders moves them.
+        foreach ($order->ids !== [] ? $order->ids : [$order->id] as $id) {
+            if ((int) $this->orders[$id]['state'] === $stateId) {
+                continue;
+            }
+            $this->orders[$id]['state'] = $stateId;
+            $this->history[] = ['order' => $id, 'state' => $stateId, 'mail' => $mail];
         }
-        $this->orders[$order->id]['state'] = $stateId;
-        $this->history[] = ['order' => $order->id, 'state' => $stateId, 'mail' => $mail];
     }
 
     public function note(OrderView $order, string $key, string $message): bool
@@ -446,6 +511,11 @@ final class FakeShopOrders implements ShopOrders
         $this->notes[$order->id][$key] = $message;
 
         return true;
+    }
+
+    public function forgetNote(OrderView $order, string $key): void
+    {
+        unset($this->notes[$order->id][$key]);
     }
 
     public function notes(int $idOrder): array
@@ -460,10 +530,36 @@ final class FakeShopOrders implements ShopOrders
 
     public function addSlip(OrderView $order, float $amount): int
     {
-        $id = count($this->slips) + 1;
-        $this->slips[] = ['order' => $order->id, 'amount' => $amount, 'id' => $id, 'wajub' => true];
+        if ($amount <= 0) {
+            return 0;
+        }
+        // Shared as PrestaShopOrders shares it between the orders a cart became.
+        $rooms = [];
+        foreach ($order->ids !== [] ? $order->ids : [$order->id] as $idOrder) {
+            $rooms[$idOrder] = (float) $this->orders[$idOrder]['total'] - $this->refundedOnOrder(new OrderView($idOrder, '', 1, 0, 0, 1, $order->currency, 0.0, 0, false, false, 'wajub', '', '', [$idOrder]));
+        }
+        $first = 0;
+        foreach (Wajub\PrestaShop\Order\Ledger::slipShares($amount, $rooms, $order->currency) as $idOrder => $share) {
+            $id = count($this->slips) + 1;
+            $this->slips[] = ['order' => $idOrder, 'amount' => $share, 'id' => $id, 'wajub' => true];
+            $first = $first > 0 ? $first : $id;
+            if ($this->onSlipAdded !== null) {
+                ($this->onSlipAdded)($order->id, $id);
+            }
+        }
 
-        return $id;
+        return $first;
+    }
+
+    public function slipGivesBack(int $idOrderSlip): float
+    {
+        foreach ($this->slips as $slip) {
+            if ($slip['id'] === $idOrderSlip) {
+                return $slip['amount'];
+            }
+        }
+
+        return 0.0;
     }
 
     /** A credit slip the merchant made in the back office, as PrestaShop adds it. */
@@ -479,7 +575,7 @@ final class FakeShopOrders implements ShopOrders
     {
         $last = 0;
         foreach ($this->slips as $slip) {
-            if ($slip['order'] === $order->id) {
+            if (in_array($slip['order'], $order->ids !== [] ? $order->ids : [$order->id], true)) {
                 $last = max($last, $slip['id']);
             }
         }
@@ -491,7 +587,7 @@ final class FakeShopOrders implements ShopOrders
     {
         $sum = 0.0;
         foreach ($this->slips as $slip) {
-            if ($slip['order'] === $order->id) {
+            if (in_array($slip['order'], $order->ids !== [] ? $order->ids : [$order->id], true)) {
                 $sum += $slip['amount'];
             }
         }
@@ -509,7 +605,8 @@ final class FakeShopOrders implements ShopOrders
     {
         $found = [];
         foreach ($this->orders as $id => $o) {
-            if ((int) $o['state'] === $stateId && $o['module'] === 'wajub' && !in_array($id, $skip, true)) {
+            // The first order of each group only, as PrestaShopOrders lists them.
+            if ((int) $o['state'] === $stateId && $o['module'] === 'wajub' && !in_array($id, $skip, true) && $this->leadId($id) === $id) {
                 $found[$id] = (int) $o['placed'];
             }
         }
@@ -587,6 +684,9 @@ final class MemoryLock implements Lock
     /** @var list<string> every lock taken, in order */
     public array $taken = [];
 
+    /** The most locks held at once: MySQL 5.6 lets a request hold one (Support\DbLock). */
+    public int $mostHeld = 0;
+
     public function acquire(string $name, int $wait): bool
     {
         if (isset($this->held[$name]) || isset($this->busy[$name])) {
@@ -594,6 +694,7 @@ final class MemoryLock implements Lock
         }
         $this->held[$name] = true;
         $this->taken[] = $name;
+        $this->mostHeld = max($this->mostHeld, count($this->held));
 
         return true;
     }
@@ -601,6 +702,40 @@ final class MemoryLock implements Lock
     public function release(string $name): void
     {
         unset($this->held[$name]);
+    }
+}
+
+/** When the soonest payment that could not count is due to be read again: a number, as the setting holds it. */
+final class MemoryRecountHint implements RecountHint
+{
+    public int $at = 0;
+
+    /** @var list<int> every value it was set to, in order */
+    public array $writes = [];
+
+    public function get(): int
+    {
+        return $this->at;
+    }
+
+    public function set(int $at): void
+    {
+        $this->at = max(0, $at);
+        $this->writes[] = $this->at;
+    }
+
+    public function lower(int $at): void
+    {
+        if ($at > 0 && ($this->at <= 0 || $at < $this->at)) {
+            $this->set($at);
+        }
+    }
+
+    public function postpone(int $until): void
+    {
+        if ($until > 0 && $this->at > 0 && $this->at < $until) {
+            $this->set($until);
+        }
     }
 }
 
@@ -681,6 +816,7 @@ function payment_services(string $environment = 'sandbox', array $settings = [])
     $GLOBALS['orders'] = new FakeShopOrders();
     $GLOBALS['locks'] = new MemoryLock();
     $GLOBALS['storefront'] = new FakeStorefront();
+    $GLOBALS['recountHint'] = new MemoryRecountHint();
 
     $s = new Services(Scope::allShops(), '1.0.0', [
         'transport' => $GLOBALS['http'],
@@ -700,6 +836,7 @@ function payment_services(string $environment = 'sandbox', array $settings = [])
         'money' => new PlainMoneyFormatter(),
         'storefront' => $GLOBALS['storefront'],
         'tokens' => new Tokens('test-secret'),
+        'recountHint' => $GLOBALS['recountHint'],
     ]);
     $s->settings()->setSecretKey('sandbox', key_for('sandbox'));
     $s->settings()->setSecretKey('live', key_for('live'));

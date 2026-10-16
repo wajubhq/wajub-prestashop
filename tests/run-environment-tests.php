@@ -286,4 +286,55 @@ check(Db::$locks === [] && Db::$lockQueries === ['GET_LOCK', 'RELEASE_LOCK'], 'r
 $lock->release('order:42');
 check(Db::$lockQueries === ['GET_LOCK', 'RELEASE_LOCK'], 'a lock not held is not released');
 
+// What the request holds, whichever of the module's objects took it: each
+// shop's services have their own lock object, on one connection.
+$other = new DbLock();
+Db::$lockQueries = [];
+check($lock->acquire('order:43', 10) && $other->acquire('order:43', 10) && Db::$lockQueries === ['GET_LOCK'] && DbLock::held() === ['order:43'], 'a lock taken by one object is held for the others too');
+$other->release('order:43');
+$lock->release('order:43');
+check(Db::$locks === [] && DbLock::held() === [], 'and let go with the last release, whichever object releases it');
+
+/** The name DbLock gives the database for `$name`. */
+function db_lock(string $name): string
+{
+    return 'wajub_' . md5((defined('_DB_NAME_') ? _DB_NAME_ : '') . '|' . _DB_PREFIX_ . '|' . $name);
+}
+
+// MySQL 5.6 lets a connection hold one named lock: a GET_LOCK of another
+// name releases the one held, which another request can then take. The
+// checkout held its cart's lock while it took its order's, and the
+// scheduled task its run's while it took each order's: on 5.6 the first
+// went. The fake database does as 5.6 does.
+Db::$mysql56 = true;
+Db::getInstance()->getValue("SELECT GET_LOCK('" . db_lock('cart:7') . "', 15)");
+Db::getInstance()->getValue("SELECT GET_LOCK('" . db_lock('order:70') . "', 15)");
+check(Db::free(db_lock('cart:7')) && !Db::free(db_lock('order:70')), 'MySQL 5.6 (the fake, as its manual says): taking a second lock lets the first go');
+Db::$locks = [];
+
+// So a request never holds two: a second name is refused, as a lock another
+// request holds is, and said in the log; the first stays held.
+$logger = new TestLogger();
+$lock = new DbLock($logger);
+Db::$lockQueries = [];
+check($lock->acquire('cart:8', 15) && !$lock->acquire('order:80', 15) && Db::$lockQueries === ['GET_LOCK'], 'MySQL 5.6: a second lock is refused, without asking the database');
+check(!Db::free(db_lock('cart:8')) && Db::free(db_lock('order:80')) && DbLock::held() === ['cart:8'], 'the first stays held, by the database as by the request');
+check(str_contains(json_encode($logger->lines) ?: '', 'A second database lock was refused') && str_contains(json_encode($logger->lines) ?: '', 'order:80'), 'and the log says which: ' . json_encode($logger->lines));
+// The checkout's way (controllers/front/validation.php): the cart's lock
+// let go before the order's is taken.
+$lock->release('cart:8');
+check($lock->acquire('order:80', 15) && !Db::free(db_lock('order:80')) && Db::free(db_lock('cart:8')), 'the cart\'s lock let go, the order\'s is taken: each held while it is needed');
+// A lock the request holds, taken again (the refund forms' request), is
+// held until its last release on 5.6 too: the database asked once each way.
+check($lock->acquire('order:80', 15) && Db::$lockQueries === ['GET_LOCK', 'RELEASE_LOCK', 'GET_LOCK'], 'taken again: not asked of the database again');
+$lock->release('order:80');
+check(!Db::free(db_lock('order:80')), 'released once: still held');
+$lock->release('order:80');
+check(Db::free(db_lock('order:80')) && DbLock::held() === [], 'released by the first taker too: let go');
+// Another request's lock times out, on 5.6 as on 5.7.
+Db::$others[db_lock('order:81')] = true;
+check(!$lock->acquire('order:81', 0) && DbLock::held() === [], 'another request\'s lock: not taken');
+Db::$others = [];
+Db::$mysql56 = false;
+
 done('environment');

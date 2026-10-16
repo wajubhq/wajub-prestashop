@@ -63,8 +63,8 @@ final class Ledger
     public function counted(OrderView $order, string $environment): array
     {
         $counted = [];
-        foreach ($this->payments->forOrder($order->id) as $record) {
-            if ($record->isCounted() && $record->environment === $environment && $record->currency === $order->currency) {
+        foreach ($this->entries($order) as $record) {
+            if ($record->environment === $environment && $record->currency === $order->currency) {
                 $counted[$record->paymentId] = $record->counted;
             }
         }
@@ -74,15 +74,24 @@ final class Ledger
 
     /**
      * Every payment the order counts, whatever its environment and currency,
-     * oldest first.
+     * oldest first: by when each was made (PaymentRecord::madeAt(), Wajub's
+     * own date once it counted), as the plugin orders them, never by the
+     * order of the shop's rows, which only say when the shop wrote each one
+     * down. Two made the same second keep the order they were written in.
      *
      * @return list<PaymentRecord>
      */
     public function entries(OrderView $order): array
     {
-        return array_values(array_filter($this->payments->forOrder($order->id), static function (PaymentRecord $record): bool {
+        $entries = array_values(array_filter($this->payments->forOrder($order->id), static function (PaymentRecord $record): bool {
             return $record->isCounted();
         }));
+        // A stable sort: those made the same second keep the order they were written in.
+        usort($entries, static function (PaymentRecord $a, PaymentRecord $b): int {
+            return $a->madeAt() <=> $b->madeAt();
+        });
+
+        return $entries;
     }
 
     /**
@@ -203,6 +212,40 @@ final class Ledger
     public static function total(OrderView $order): float
     {
         return Amount::normalize($order->total, $order->currency);
+    }
+
+    /**
+     * How a credit slip of `$amount` that records a refund made outside
+     * PrestaShop (in the Wajub Dashboard) is shared between the orders a
+     * cart that ships in several packages became (OrderView::$ids), by order
+     * id: each takes, in turn, up to its `$rooms` (its total less what its
+     * slips refund already), so that no order's slips refund more than it
+     * cost, as PrestaShop's own refunds, which are each order's; what none
+     * has room for (a refund of more than the group's slips may record) goes
+     * to the first. An order of its own takes it all.
+     *
+     * @param array<int, float> $rooms by order id, the first order first
+     *
+     * @return array<int, float> by order id, those that take something
+     */
+    public static function slipShares(float $amount, array $rooms, string $currency): array
+    {
+        $left = Amount::normalize($amount, $currency);
+        $shares = [];
+        foreach ($rooms as $idOrder => $room) {
+            $share = min($left, max(0.0, Amount::normalize($room, $currency)));
+            if ($share > 0) {
+                $shares[$idOrder] = $share;
+                $left = Amount::normalize($left - $share, $currency);
+            }
+        }
+        if ($left > 0 && $rooms !== []) {
+            $first = (int) array_key_first($rooms);
+            $shares[$first] = Amount::normalize(($shares[$first] ?? 0.0) + $left, $currency);
+            ksort($shares);
+        }
+
+        return $shares;
     }
 
     /** What is left to pay of the order's total in `$environment`. */

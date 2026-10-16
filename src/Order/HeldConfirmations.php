@@ -35,6 +35,10 @@ if (!defined('_PS_VERSION_')) {
  *
  * An e-mail PrestaShop would send with an attachment (an invoice, for a
  * state that makes one) is never held: it goes as PrestaShop sends it.
+ *
+ * Kept TTL at most, and forgotten as soon as the order can no longer be
+ * paid because the module cancelled it (forgetOrder()), or the customer's
+ * data is erased (forget()).
  */
 final class HeldConfirmations
 {
@@ -124,6 +128,23 @@ final class HeldConfirmations
         $this->state->delete(self::key($idOrder));
 
         return true;
+    }
+
+    /**
+     * Forgets the confirmations held for an order the module cancelled
+     * itself, unpaid, and for every order its cart became: given back as a
+     * cart (Checkout\Release), whose next order has a confirmation of its
+     * own, or left unpaid past the delay (Order\Cleanup). Neither is paid
+     * from then on, so their e-mails would never be sent, and the customer's
+     * name, e-mail address and addresses they hold are kept no longer. An
+     * order the merchant cancels keeps its own: a payment still under way
+     * may pay it after all, and its confirmation goes then.
+     */
+    public function forgetOrder(OrderView $order): void
+    {
+        foreach ($order->ids !== [] ? $order->ids : [$order->id] as $idOrder) {
+            $this->forget((int) $idOrder);
+        }
     }
 
     /** Whether a confirmation is held for the order. */

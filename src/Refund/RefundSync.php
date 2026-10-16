@@ -11,6 +11,7 @@ declare(strict_types=1);
 
 namespace Wajub\PrestaShop\Refund;
 
+use Wajub\PrestaShop\Api\ApiException;
 use Wajub\PrestaShop\Api\Client;
 use Wajub\PrestaShop\Order\Ledger;
 use Wajub\PrestaShop\Order\OrderView;
@@ -261,8 +262,18 @@ final class RefundSync
 
         $reason = ApiReason::of($failure, $this->t);
         if ($done === []) {
-            return self::answer(self::REFUSED, Client::unanswered($failure)
-                ? $this->t->trans('Wajub did not answer (%reason%): the refund may have been made all the same, and is then recorded on the order as a credit slip once Wajub confirms it. Until then, asking again for the same amount sends the same refund again: the customer is not refunded twice.', ['%reason%' => $reason], 'Modules.Wajub.Admin')
+            if (Client::unanswered($failure)) {
+                return self::answer(self::REFUSED, $this->t->trans('Wajub did not answer (%reason%): the refund may have been made all the same, and is then recorded on the order as a credit slip once Wajub confirms it. Until then, asking again for the same amount sends the same refund again: the customer is not refunded twice.', ['%reason%' => $reason], 'Modules.Wajub.Admin'));
+            }
+            // Refused as more than the payment can refund: Wajub may have
+            // refunded some of it already, out of the shop's sight (a
+            // refund made in the Wajub Dashboard whose webhook never
+            // arrived). Its refunds are read, and recorded as their webhooks
+            // would have.
+            $caught = self::refusedAsAsked($failure) ? $this->catchUp($order, $environment) : 0.0;
+
+            return self::answer(self::REFUSED, $caught > 0
+                ? $this->t->trans('Wajub did not refund it: %reason%. Wajub had refunded %amount% of this order that the shop had not recorded (its notification never arrived): it is recorded on the order now, as a credit slip. Check what is left to refund.', ['%reason%' => rtrim($reason, '.'), '%amount%' => $this->money->format($caught, $order->currency)], 'Modules.Wajub.Admin')
                 : $this->t->trans('Wajub did not refund it: %reason%', ['%reason%' => $reason], 'Modules.Wajub.Admin'));
         }
 
@@ -273,6 +284,60 @@ final class RefundSync
             '%asked%' => $this->money->format($asked, $order->currency),
             '%reason%' => $reason,
         ], 'Modules.Wajub.Admin'), $keys, $refunded);
+    }
+
+    /**
+     * Whether Wajub refused the refund as asked (more than the payment can
+     * still refund, a payment refunded in full already), rather than the key
+     * or the payment: a 400, 409 or 422.
+     */
+    private static function refusedAsAsked(\Throwable $failure): bool
+    {
+        return $failure instanceof ApiException && in_array($failure->httpStatus, [400, 409, 422], true);
+    }
+
+    /**
+     * The refunds of the order's payments counted in `$environment` that
+     * Wajub made and the shop never heard of, or heard less of (their
+     * webhooks lost: an endpoint down past Wajub's retries, a `wajub
+     * listen` stopped), read from Wajub and recorded as their webhooks would
+     * have been (webhook()): one that gave back money of the order on a
+     * credit slip of its own, the others noted. Each is known by its id once
+     * recorded, so a webhook that arrives after all records nothing twice.
+     * What the order's credit slips refund more than before.
+     *
+     * The caller holds the order's lock, and has no credit slip of
+     * PrestaShop's coming (the refund was refused): a slip made here is
+     * never taken for the form's (Refund\PendingSlips).
+     */
+    public function catchUp(OrderView $order, string $environment): float
+    {
+        $before = $this->orders->refundedOnOrder($order);
+        foreach (array_keys($this->ledger->counted($order, $environment)) as $paymentId) {
+            $record = $this->payments->find((string) $paymentId);
+            if ($record === null || $record->environment !== $environment) {
+                continue;
+            }
+            try {
+                $refunds = ($this->clientFor)($environment)->paymentRefunds($record->paymentId);
+            } catch (\Throwable $e) {
+                $this->logger->info('Refunds of a payment could not be read after a refused refund', ['order' => $order->id, 'payment' => $record->paymentId, 'error' => $e->getMessage()]);
+
+                continue;
+            }
+            foreach ($refunds as $refund) {
+                $refundId = DbRefundStore::refundId($refund['id'] ?? '');
+                $known = $refundId !== '' ? $this->refunds->find($refundId) : null;
+                if ($refundId === '' || ($known !== null && !DbRefundStore::movesOn($known->status, DbRefundStore::status($refund['status'] ?? '')))) {
+                    continue;
+                }
+                $this->logger->info('Refund the shop had not heard of, read after a refused refund', ['order' => $order->id, 'payment' => $record->paymentId, 'refund' => $refundId]);
+                $this->webhook($this->orders->find($order->id) ?? $order, $record, 'refund.updated', $refund);
+            }
+        }
+        $order = $this->orders->find($order->id) ?? $order;
+
+        return max(0.0, Amount::normalize($this->orders->refundedOnOrder($order) - $before, $order->currency));
     }
 
     /**
@@ -317,13 +382,36 @@ final class RefundSync
     }
 
     /**
+     * A credit slip PrestaShop made of a refund of the order page that Wajub,
+     * or the module, refused this request (Refund\RefusedRefund), which it
+     * should not have made: never refunded through Wajub (part of it may be
+     * on a slip of the module's already), and the merchant is told what to
+     * do. Why it was refused goes to the log, not in the note: it is the
+     * message PrestaShop should have shown, written for a refund that makes
+     * no slip ("no credit slip was made", "try again"). PrestaShop deletes no
+     * credit slip (its back office only lists them and prints them): the
+     * merchant refunds the customer another way, or corrects the stock and
+     * the accounts the slip changed.
+     */
+    public function noteRefusedSlip(OrderView $order, int $idOrderSlip, string $reason): void
+    {
+        $this->logger->error('PrestaShop made the credit slip of a refund Wajub refused: not refunded through Wajub', ['order' => $order->id, 'slip' => $idOrderSlip, 'reason' => $reason]);
+        $this->orders->note($order, 'refused_slip_' . $idOrderSlip, $this->t->trans(
+            'PrestaShop made credit slip %slip% though Wajub had refused this refund: Wajub refunded nothing for it (Advanced Parameters > Logs says why). If the customer should get this money back, refund them another way; otherwise, correct the stock and your accounts, as PrestaShop cannot delete a credit slip.',
+            ['%slip%' => (string) $idOrderSlip],
+            'Modules.Wajub.Admin'
+        ));
+    }
+
+    /**
      * Records the refunds refundForSlip() made on the credit slip PrestaShop
-     * made of them, which its hook (actionOrderSlipAdd) never brought to the
-     * module: PrestaShop adds the slip, then runs the hook, which stops at
-     * the first module whose hook fails (a PHP error, or any exception in
-     * debug mode). PrestaShop then reports the error, maybe before writing
-     * the quantities the slip refunded, and the merchant is told to check
-     * them before refunding the order again.
+     * made of them, which its hook (actionOrderSlipAdd) has not brought to
+     * the module (Refund\PendingSlips): PrestaShop adds the slip, then runs
+     * the hook, which stops at the first module whose hook fails (a PHP
+     * error, or any exception in debug mode). PrestaShop then reports the
+     * error, before writing the quantities the slip refunded, and the
+     * merchant is told to check them before refunding the order again;
+     * until the hook reaches the module after all (slipSeen()).
      *
      * @param list<string> $keys
      */
@@ -340,11 +428,28 @@ final class RefundSync
         if ($amount <= 0) {
             return;
         }
-        $this->orders->note($order, 'unseen_slip_' . $idOrderSlip, $this->t->trans(
+        $this->orders->note($order, self::unseenSlipNote($idOrderSlip), $this->t->trans(
             'PrestaShop made credit slip %slip% of this refund without the module being told: it records the %amount% Wajub refunded for it. An error may have stopped the refund after the slip: check the refunded quantities of the order\'s products before refunding it again.',
             ['%slip%' => (string) $idOrderSlip, '%amount%' => $this->money->format(Amount::normalize($amount, $order->currency), $order->currency)],
             'Modules.Wajub.Admin'
         ));
+    }
+
+    /**
+     * PrestaShop's hook told the module of the credit slip
+     * recordOnUnseenSlip() recorded the refunds on as PrestaShop added it
+     * (Refund\PendingSlips): PrestaShop went on with the refund, and the note
+     * that it may have stopped after the slip is taken back.
+     */
+    public function slipSeen(OrderView $order, int $idOrderSlip): void
+    {
+        $this->orders->forgetNote($order, self::unseenSlipNote($idOrderSlip));
+    }
+
+    /** The key of the note that PrestaShop may have stopped after the slip. */
+    private static function unseenSlipNote(int $idOrderSlip): string
+    {
+        return 'unseen_slip_' . $idOrderSlip;
     }
 
     /**
