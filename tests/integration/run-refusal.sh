@@ -10,8 +10,8 @@
 # makes no credit slip, whatever mode the shop is in: PrestaShop 8 swallows
 # what a module's hook throws once debug mode is off (Hook::callHookOn()), so
 # the module's refusal travels in the form's data instead
-# (Refund\RefusedRefund). Run in production mode (env/prod.sh <v> on) and in
-# debug mode, on a local shop of ~/.cache/wajub-prestashop/env (ENV.md):
+# (Refund\RefusedRefund). Run in production mode (prod.sh <v> on) and in
+# debug mode, on a local shop of the environment WAJUB_PS_ENV names:
 #
 #   1. refused by the module, without asking Wajub: an order never paid in
 #      full (Partial refund, Standard refund), an order paid in Live while

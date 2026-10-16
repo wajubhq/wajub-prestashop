@@ -173,31 +173,13 @@ node tests/run-fields-js-tests.js                  # scripts du tunnel et de la 
 _PS_ROOT_DIR_=/chemin/vers/prestashop bin/check.sh # tout : syntaxe, règles Addons, tests, traductions, php-cs-fixer, PHPStan
 ```
 
-Intégration, sur les boutiques locales de `~/.cache/wajub-prestashop/env` (voir `ENV.md`), PrestaShop 8 et 9 en parallèle possible :
-
-```sh
-E=~/.cache/wajub-prestashop/env
-$E/reset.sh 8                                   # une boutique sans le module
-tests/integration/run.sh 8                      # installation, webhook, back-office, formulaires, désinstallation, zip
-tests/integration/run-payment.sh 8              # le tunnel avec chaque option, contre un faux Wajub
-tests/integration/run-money.sh 8                # payé en partie, reste à payer, remboursements, tâche planifiée
-tests/integration/run-finish.sh 8               # deux boutiques à deux adresses, clé qui expire (e-mail), RGPD, contenu du zip
-tests/integration/run-upgrade.sh 8              # mise à jour depuis 1.0.0 (premier commit) : bin/console prestashop:module upgrade
-tests/integration/run-refusal.sh 8              # remboursements refusés, dans le mode de la boutique (debug ou production)
-tests/integration/run-notices.sh 8              # alertes du back-office, badge, HTTPS, tâche planifiée, .htaccess (debug ou production)
-$E/prod.sh 8 on && tests/integration/run-refusal.sh 8 --sandbox-key-file ~/.config/wajub/config.json && $E/prod.sh 8 off
-tests/integration/run-mysql56.sh                # verrous et tables du module sur un vrai MySQL 5.6 ($E/db56.sh)
-```
-
-`api-stub.py` remplace l’API (activé par `_WAJUB_API_URL_`, et Wajub.js par `_WAJUB_JS_URL_`, lus seulement en mode debug) ; `smtp-sink.py` garde les e-mails envoyés. En mode production, la boutique parle à la vraie API : `run-refusal.sh` y prépare ses commandes sans appeler Wajub (`checks.php inject-order`), et, avec une clé Sandbox d’un vrai compte (lue dans le fichier de la CLI Wajub, passée à la boutique sur son entrée standard, jamais affichée), fait de vrais paiements (`wajub trigger`) et remboursements de test, dont un fait par `wajub refunds create`, que la boutique n’apprend qu’au refus suivant de Wajub (aucun webhook ne lui parvient).
-
 ### Qualité et règles Addons
 
 `bin/lint-module.php` (lancé par `check.sh`, et par `build-zip.sh` sur le contenu du zip) vérifie : un `index.php` dans chaque dossier, l’en-tête de licence de chaque fichier PHP, JS, CSS et gabarit, l’arrêt de chaque fichier PHP hors de PrestaShop (`_PS_VERSION_`), aucune fonction refusée (`eval`, `exec`, `serialize`…), ni `register_shutdown_function` (fin de requête : `kernel.terminate`), ni `base64_encode`/`base64_decode` (les images sont des fichiers), ni `$_SESSION` (messages : notifications de PrestaShop), aucune variable de requête ou de serveur lue directement (`Tools::getValue()`, la `Request` de Symfony), chaque `Tools::getValue()` d’un nom écrit en toutes lettres et converti à son type à la lecture (`(string)`, `(int)`, `(array)`…), aucun `<script src>` ni `<link rel="stylesheet">` dans un gabarit, aucune variable de gabarit affichée sans `|escape:'htmlall':'UTF-8'` (ou `|intval`), chaque texte de gabarit dans un domaine du module, la version de `config.xml`, les e-mails en anglais et en français, `ps_versions_compliancy` qui finit à `'9.99.99'` écrit en toutes lettres (jamais `_PS_VERSION_`, rejet automatique d’Addons), le `.htaccess` à la racine qui refuse toute requête vers un fichier PHP du module (Apache 2.2 `Deny from all` et 2.4 `Require all denied`), et, dans le zip, un `composer.json` sans `require-dev` ni `scripts` (`build-zip.sh` le réduit à ce qui décrit le module et son chargement de classes).
 
-Le `.htaccess` ne gêne rien : les pages du module (webhook, tâche planifiée, contrôleurs du tunnel, relecture des paiements) passent par l’`index.php` de la boutique (`module/wajub/<page>` ou `index.php?fc=module&module=wajub&controller=<page>`), et ses images, scripts et styles ne sont pas du PHP. `run-notices.sh` le vérifie sur les boutiques (fichiers PHP refusés en 403, pages, styles, scripts et logos servis), et tous les runners d’intégration tournent avec lui. Un serveur sans Apache (nginx) ne lit pas de `.htaccess` : rien n’y change, les fichiers PHP du module s’arrêtent d’eux-mêmes hors de PrestaShop (`_PS_VERSION_`).
+Le `.htaccess` ne gêne rien : les pages du module (webhook, tâche planifiée, contrôleurs du tunnel, relecture des paiements) passent par l’`index.php` de la boutique (`module/wajub/<page>` ou `index.php?fc=module&module=wajub&controller=<page>`), et ses images, scripts et styles ne sont pas du PHP. Les tests d’intégration le vérifient sur PrestaShop 8 et 9 (fichiers PHP refusés en 403, pages, styles, scripts et logos servis), et tournent tous avec lui. Un serveur sans Apache (nginx) ne lit pas de `.htaccess` : rien n’y change, les fichiers PHP du module s’arrêtent d’eux-mêmes hors de PrestaShop (`_PS_VERSION_`).
 
-Le module parle à Wajub avec l’extension cURL de PHP (`src/Http/CurlTransport.php`, fonctions `curl_*`), à dessein : aucune dépendance Composer à l’exécution (PrestaShop 8 et 9 n’embarquent pas le même client HTTP, Guzzle 7 d’un côté, le client de Symfony 6 de l’autre, et un module ne doit pas en livrer un second) ; la vérification du certificat toujours active, jamais de redirection suivie, HTTPS seul (HTTP pour une adresse de test en mode debug), des délais de connexion et de réponse courts : une clé ne part jamais ailleurs que chez Wajub. Toute requête passe par l’interface `Http\Transport`, que les tests remplacent. PHPStan (niveau 6) tourne contre les sources de PrestaShop 8.2 et 9.0 ; php-cs-fixer suit les règles de PrestaShop ; `env/lint.sh 8` vérifie la syntaxe sous PHP 8.1.
+Le module parle à Wajub avec l’extension cURL de PHP (`src/Http/CurlTransport.php`, fonctions `curl_*`), à dessein : aucune dépendance Composer à l’exécution (PrestaShop 8 et 9 n’embarquent pas le même client HTTP, Guzzle 7 d’un côté, le client de Symfony 6 de l’autre, et un module ne doit pas en livrer un second) ; la vérification du certificat toujours active, jamais de redirection suivie, HTTPS seul (HTTP pour une adresse de test en mode debug), des délais de connexion et de réponse courts : une clé ne part jamais ailleurs que chez Wajub. Toute requête passe par l’interface `Http\Transport`, que les tests remplacent. PHPStan (niveau 6) tourne contre les sources de PrestaShop 8.2 et 9.0 ; php-cs-fixer suit les règles de PrestaShop ; `PHP81_LINT='<php 8.1> -l' bin/check.sh` vérifie aussi la syntaxe sous PHP 8.1.
 
 ### Traductions
 
@@ -221,5 +203,5 @@ Pour une version :
 
 1. Changer `Wajub::VERSION` et `<version>` dans `config.xml` (vérifiés ensemble), ajouter la version en tête de `CHANGELOG.md`.
 2. Si la version change une table ou ajoute un hook : `upgrade/upgrade-X.Y.Z.php` (voir `upgrade/README.md`) ; une table gardée à la désinstallation (`Schema::KEPT`) change aussi dans `Schema::create()`.
-3. `bin/check.sh` (avec `_PS_ROOT_DIR_`), les runners d’intégration sur PrestaShop 8 et 9 (`run-refusal.sh` en mode debug et en production), puis `bin/build-zip.sh`.
+3. `bin/check.sh` (avec `_PS_ROOT_DIR_`), les tests d’intégration sur PrestaShop 8 et 9, en mode debug et en production, puis `bin/build-zip.sh`.
 4. Déposer le zip sur PrestaShop Addons (son validateur en ligne) et sur la page de téléchargement de Wajub.

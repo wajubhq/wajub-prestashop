@@ -6,8 +6,8 @@
 # @copyright Since 2026 Wajub
 # @license   https://opensource.org/licenses/MIT MIT License
 #
-# What the back office of a local shop (the shops of
-# ~/.cache/wajub-prestashop/env, ENV.md) says of the module, page by page,
+# What the back office of a local shop (of the environment WAJUB_PS_ENV
+# names) says of the module, page by page,
 # PrestaShop 8 and 9, legacy and Symfony pages (Admin\Notices):
 #
 #   1. no key: "Finish setting up Wajub" on the dashboard, nowhere else;

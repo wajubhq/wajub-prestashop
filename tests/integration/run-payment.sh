@@ -6,8 +6,8 @@
 # @copyright Since 2026 Wajub
 # @license   https://opensource.org/licenses/MIT MIT License
 #
-# Payments on a local shop (the shops of ~/.cache/wajub-prestashop/env,
-# ENV.md), against the stand-in for Wajub's API (tests/integration/api-stub.py),
+# Payments on a local shop (of the environment WAJUB_PS_ENV names),
+# against the stand-in for Wajub's API (tests/integration/api-stub.py),
 # which also serves the stand-in Wajub.js the checkout loads: the demo
 # customer goes through PrestaShop's checkout with curl, and pays.
 #

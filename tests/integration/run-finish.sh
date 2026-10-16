@@ -6,8 +6,7 @@
 # @copyright Since 2026 Wajub
 # @license   https://opensource.org/licenses/MIT MIT License
 #
-# What a local shop (the shops of ~/.cache/wajub-prestashop/env, ENV.md)
-# shows of the module's last part, against the stand-in for Wajub's API
+# What a local shop (of the environment WAJUB_PS_ENV names) shows of the module's last part, against the stand-in for Wajub's API
 # (tests/integration/api-stub.py) and a mail server that keeps what it gets
 # (tests/integration/smtp-sink.py):
 #

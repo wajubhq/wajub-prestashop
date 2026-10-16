@@ -6,8 +6,8 @@
 # @copyright Since 2026 Wajub
 # @license   https://opensource.org/licenses/MIT MIT License
 #
-# The module on a local shop (the shops of ~/.cache/wajub-prestashop/env,
-# ENV.md): PHP syntax and the unit tests under the shop's PHP, install,
+# The module on a local shop (of the environment WAJUB_PS_ENV names): PHP
+# syntax and the unit tests under the shop's PHP, install,
 # what install() left and the adapters on the shop's own database, the
 # webhook over HTTP (signed, unsigned, replayed, stale, empty, unreadable,
 # from the other environment, in maintenance mode), who may open the

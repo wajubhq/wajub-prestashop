@@ -6,8 +6,8 @@
 # @copyright Since 2026 Wajub
 # @license   https://opensource.org/licenses/MIT MIT License
 #
-# The module's locks and tables on a real MySQL 5.6 server (env/db56.sh,
-# ENV.md "MySQL 5.6"), where a connection holds one named lock only:
+# The module's locks and tables on a real MySQL 5.6 server (db56.sh of the
+# environment WAJUB_PS_ENV names), where a connection holds one named lock only:
 # tests/integration/mysql56.php, run with the PHP of a shop (PHP 8.1 on the
 # PrestaShop 8 shops), against the module's sources of the repository.
 #

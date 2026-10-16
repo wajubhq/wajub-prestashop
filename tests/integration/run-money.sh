@@ -6,8 +6,8 @@
 # @copyright Since 2026 Wajub
 # @license   https://opensource.org/licenses/MIT MIT License
 #
-# The money of an order on a local shop (the shops of
-# ~/.cache/wajub-prestashop/env, ENV.md), against the stand-in for Wajub's API
+# The money of an order on a local shop (of the environment WAJUB_PS_ENV
+# names), against the stand-in for Wajub's API
 # (tests/integration/api-stub.py): what run-payment.sh does not reach.
 #
 #   1. part paid: an order paid 4 000 short on Wajub's page (a plan closed
