@@ -45,7 +45,9 @@
 #      pages ask, and one of an order deleted since, asked for no more;
 #   6. the scheduled task (controllers/front/cron.php): a wrong token refused;
 #      an order the payer left cancelled, its payment cancelled with Wajub;
-#      an order part paid kept;
+#      an order part paid kept; an order the merchant cancels, its payment
+#      nobody started paying cancelled with Wajub, one being paid left to go
+#      through, the merchant told;
 #   7. "Check status" of a payment Wajub has not in this environment; none
 #      for an order that no longer waits for its payment.
 #
@@ -428,6 +430,29 @@ fi
 "$ENV_DIR/exec.sh" "$MAJOR" php bin/console prestashop:module uninstall wajubfailinghook >/dev/null 2>&1 || true
 expect "the failing module removed" "$(shop_checks failing-hook remove | tail -1)" removed
 
+section "Another module's hook fails after the module's"
+# A module installed after Wajub runs after it on actionOrderSlipAdd. In
+# debug mode its Exception stops PrestaShop there, once the module heard of
+# the slip and before PrestaShop wrote the quantities it refunded: the order
+# page flashes the error and redirects. The note to check the refunded
+# quantities stays, never taken back by that redirect. With debug mode
+# off, PrestaShop swallows it and goes on: nothing to check.
+shop_checks failing-hook write >/dev/null
+FAILING=1
+"$ENV_DIR/exec.sh" "$MAJOR" php bin/console prestashop:module install wajubfailinghook >/dev/null 2>&1 || true
+expect "a module whose actionOrderSlipAdd fails runs after the module's" "$(shop_checks failing-hook last | tail -1)" last
+BO_TOKEN="$(bo_login "$bo_jar")"
+before_slips="$(json 'len(d["slips"])' <<<"$(shop_checks refunds "$RET_ORDER" | tail -1)")"
+after="$(partial_refund "$RET_ORDER" 500)"
+printf '%s' "$after" > "$LOG_DIR/wajub-money-failing-after-ps$MAJOR.html"
+refunds="$(shop_checks refunds "$RET_ORDER" | tail -1)"
+expect "PrestaShop's slip, which records the refund" "$(json 'str(len(d["slips"])) + "/" + str(str(d["refunds"][-1]["id_order_slip"]) == str(d["slips"][-1]["id_order_slip"]))' <<<"$refunds")" "$((before_slips + 1))/True"
+if [ "$(shop_checks mode | tail -1)" = debug ]; then
+    contains "debug mode: the merchant is still told to check the refunded quantities" "$(shop_checks order "$RET_ORDER" | tail -1)" "PrestaShop made credit slip $(json 'd["slips"][-1]["id_order_slip"]' <<<"$refunds") of this refund without the module being told"
+fi
+"$ENV_DIR/exec.sh" "$MAJOR" php bin/console prestashop:module uninstall wajubfailinghook >/dev/null 2>&1 || true
+expect "the failing module removed" "$(shop_checks failing-hook remove | tail -1)" removed
+
 # Wajub's webhook of the newest refund the stand-in made for `$1`, as Wajub
 # sends it a little later: its HTTP status.
 deliver_refund_of() {
@@ -732,6 +757,15 @@ contains "the merchant reads it" "$order" "Wajub payment $CANCEL_PAYMENT, which 
 expect "the order stays as the merchant left it" "$(json 'd["state"]' <<<"$order")" "$(shop_checks states | tail -1 | json 'd["canceled"]')"
 expect "its webhook, which follows, is accepted" "$(deliver_payment "$CANCEL_PAYMENT" payment.cancelled)" 200
 lacks "and never puts it on the customer" "$(shop_checks order "$CANCEL_ORDER" | tail -1)" 'The customer did not complete'
+# One being paid (a card at its 3-D Secure challenge) is never cancelled:
+# Wajub cannot stop it at the bank, and the merchant is told to refund it,
+# should it go through.
+PAYING_ORDER="$(place_hosted_order)"
+PAYING_PAYMENT="$(json 'd["wajub"][0]["payment_id"]' <<<"$(shop_checks order "$PAYING_ORDER" | tail -1)")"
+stub_set "$PAYING_PAYMENT" '{"status": "processing"}'
+expect "one being paid, cancelled from its page" "$(shop_checks cancel "$PAYING_ORDER" | tail -1)" "$(shop_checks states | tail -1 | json 'd["canceled"]')"
+expect "its payment is left to go through" "$(json 'd["status"]' <<<"$(stub_payment "$PAYING_PAYMENT")")" processing
+contains "the merchant is told to refund it should it go through" "$(shop_checks order "$PAYING_ORDER" | tail -1)" "while Wajub payment $PAYING_PAYMENT was being paid"
 
 section "Check status"
 stub_set "$PART_PAYMENT" '{"sandbox": false}'

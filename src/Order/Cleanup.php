@@ -79,8 +79,14 @@ final class Cleanup
     /** Where the orders kept are listed, with when they may be looked at again. */
     private const KEPT = 'cleanup_kept';
 
-    /** Seconds after it was asked that a refund of the order page no slip records is recorded by a run. */
+    /**
+     * Seconds after it was asked that a refund of the order page no slip
+     * records is looked at by a run, and up to when (a day on, it is left
+     * to the merchant and Wajub's own records).
+     */
     public const SLIP_AFTER = 900;
+
+    private const SLIP_UNTIL = 86400;
 
     /** At most this many such refunds are looked at per run. */
     private const SLIPS_PER_RUN = 5;
@@ -205,20 +211,21 @@ final class Cleanup
 
     /**
      * The refunds of the order page that Wajub made and no credit slip
-     * records, a quarter of an hour on: a PHP error ended their request
-     * before PrestaShop made the slip (another module's), and their webhook
-     * never came (a shop without one). One still under way is read from
-     * Wajub first (RefundSync::catchUp(), which records it once it went
-     * through); one that went through is recorded on a slip of its own, as
-     * the end of its request would have (RefundSync::recordWithoutSlip()).
-     * Each under its order's lock; a few per run.
+     * records, from a quarter of an hour to a day on, newest first: a PHP
+     * error ended their request before PrestaShop made the slip (another
+     * module's), and their webhook never came (a shop without one). One
+     * still under way is read from Wajub (RefundSync::catchUp(), which
+     * records it once it went through); one that went through is recorded
+     * as its webhook would have (RefundSync::recordLeftRefund()), for what
+     * the order does not record already: never a second slip. Each under
+     * its order's lock; a few per run.
      */
     private function recordSlipsLeft(int $now): void
     {
         if ($this->refunds === null) {
             return;
         }
-        foreach ($this->refunds->shopsWithoutSlip(date('Y-m-d H:i:s', $now - self::SLIP_AFTER), self::SLIPS_PER_RUN) as $refund) {
+        foreach ($this->refunds->shopsWithoutSlip(date('Y-m-d H:i:s', $now - self::SLIP_UNTIL), date('Y-m-d H:i:s', $now - self::SLIP_AFTER), self::SLIPS_PER_RUN) as $refund) {
             $services = ($this->servicesFor)($refund->idShop);
             $lock = $services->lock();
             $name = '';
@@ -235,15 +242,17 @@ final class Cleanup
                     continue;
                 }
                 if ($fresh->status !== 'succeeded') {
+                    // Read from Wajub: once it went through, recorded as its
+                    // webhook records it, for what the order does not record.
                     $services->refundSync()->catchUp($order, $fresh->environment);
-                    $order = $orders->find($order->id) ?? $order;
-                    $fresh = $services->refunds()->findByKey($refund->requestKey);
-                    if ($fresh === null || $fresh->idOrderSlip > 0 || $fresh->status !== 'succeeded') {
-                        continue;
-                    }
+
+                    continue;
                 }
-                $slip = $services->refundSync()->recordWithoutSlip($order, [$fresh->requestKey]);
-                $this->logger->error('A refund Wajub made from the order page had no credit slip: the scheduled task recorded it on one of its own', ['order' => $order->id, 'refund' => $fresh->refundId, 'slip' => $slip]);
+                $services->refundSync()->recordLeftRefund($order, $fresh);
+                $after = $services->refunds()->findByKey($refund->requestKey);
+                if ($after !== null && $after->idOrderSlip > 0) {
+                    $this->logger->error('A refund Wajub made from the order page had no credit slip: the scheduled task recorded it', ['order' => $order->id, 'refund' => $fresh->refundId, 'slip' => $after->idOrderSlip]);
+                }
             } catch (\Throwable $e) {
                 $this->logger->error('A refund left without a credit slip could not be recorded', ['order' => $refund->idOrder, 'error' => $e->getMessage()]);
             } finally {
@@ -372,7 +381,7 @@ final class Cleanup
         foreach ($statuses as $paymentId => $status) {
             if ($status === 'processing') {
                 $services->orders()->note($order, 'kept_processing_' . md5((string) $paymentId), $services->translator()->trans(
-                    'This unpaid order was not cancelled: Wajub payment %payment% may still go through (Wajub status: %status%). The order is looked at again once Wajub tells how the payment ended.',
+                    'This unpaid order was not cancelled: Wajub payment %payment% may still go through (Wajub status: %status%). The scheduled task looks at the order again until Wajub tells how the payment ended.',
                     ['%payment%' => (string) $paymentId, '%status%' => $status],
                     'Modules.Wajub.Admin'
                 ));

@@ -131,7 +131,7 @@
         </div>
       </div>
       <div class="form-group">
-        <label class="control-label col-lg-3" for="wajub-cron-url">{l s='Scheduled task' d='Modules.Wajub.Admin'}</label>
+        <label class="control-label col-lg-3"{if $wajub.cron_url !== ''} for="wajub-cron-url"{/if}>{l s='Scheduled task' d='Modules.Wajub.Admin'}</label>
         <div class="col-lg-9">
           {if $wajub.cron_url !== ''}
             <div class="input-group">

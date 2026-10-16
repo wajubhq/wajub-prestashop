@@ -1289,44 +1289,73 @@ class Wajub extends PaymentModule
 
     /**
      * The merchant (or another module) cancelled an order placed with Wajub:
-     * its payments still open are cancelled with Wajub, so that nobody pays
-     * a cancelled order (Order\OpenPayments::cancelWithOrder()), under the
-     * order's lock. The order says what became of each. The merchant's state
-     * stands, whatever Wajub answers; nothing here may break the change.
+     * its payments still open are read, and those nobody started paying are
+     * cancelled with Wajub, so that nobody pays a cancelled order
+     * (Order\OpenPayments::cancelWithOrder()), under the order's lock. One
+     * under way is not: Wajub cannot stop it at the operator or the bank.
+     * The order says what became of each. An order PrestaShop split in
+     * several packages waits until all of them are cancelled: the others
+     * may still be paid with the same payment. Nothing here may break the
+     * change.
      */
     private function cancelledByMerchant(Order $order): void
     {
-        $services = $this->servicesFor((int) $order->id_shop);
+        $idOrder = (int) $order->id;
+        $name = '';
+        $lock = null;
         try {
+            $services = $this->servicesFor((int) $order->id_shop);
             $orders = $services->orders();
-            $name = 'order:' . $orders->leadId((int) $order->id);
+            $view = $orders->find($idOrder);
+            if ($view === null) {
+                return;
+            }
+            $canceled = (int) Configuration::get('PS_OS_CANCELED');
+            foreach ($view->ids !== [] ? $view->ids : [$view->id] as $id) {
+                if ((int) (new Order((int) $id))->current_state !== $canceled) {
+                    return;
+                }
+            }
+            $wanted = 'order:' . $orders->leadId($idOrder);
             $lock = $services->lock();
-            if (!$lock->acquire($name, 10)) {
-                $services->logger()->info('An order the merchant cancelled is held by another request: its payments are left to it', ['order' => (int) $order->id]);
+            if (!$lock->acquire($wanted, 10)) {
+                $services->logger()->info('An order the merchant cancelled is held by another request: its payments are left to it', ['order' => $idOrder]);
 
                 return;
             }
-            try {
-                $view = $orders->find((int) $order->id);
-                if ($view === null) {
-                    return;
+            $name = $wanted;
+            $view = $orders->find($idOrder) ?? $view;
+            $done = $services->openPayments()->cancelWithOrder($view);
+            $t = $services->translator();
+            foreach ($done as $what => $paymentIds) {
+                foreach ($paymentIds as $paymentId) {
+                    $parameters = ['%payment%' => $paymentId];
+                    // Literal texts: bin/i18n.php reads them for the catalogue.
+                    if ($what === 'cancelled') {
+                        $text = $t->trans('The order was cancelled: Wajub payment %payment%, which nobody had paid, is cancelled with Wajub too, so that it can no longer go through.', $parameters, 'Modules.Wajub.Admin');
+                    } elseif ($what === 'under_way') {
+                        $text = $t->trans('The order was cancelled while Wajub payment %payment% was being paid: Wajub cannot stop it at the operator or the bank. Should it go through, it counts toward the order again: refund it if the customer is not to have this order.', $parameters, 'Modules.Wajub.Admin');
+                    } elseif ($what === 'took_money') {
+                        $text = $t->trans('The order was cancelled, but Wajub payment %payment% took money for it (it went through, or collected instalments), which counts toward the order again: refund it if the customer is not to have this order.', $parameters, 'Modules.Wajub.Admin');
+                    } else {
+                        $text = $t->trans('The order was cancelled, but Wajub did not answer when the shop cancelled payment %payment%: cancel it in the Wajub Dashboard, so that it cannot go through.', $parameters, 'Modules.Wajub.Admin');
+                    }
+                    $orders->note($view, 'merchant_cancelled_' . $what . '_' . md5($paymentId), $text);
                 }
-                $done = $services->openPayments()->cancelWithOrder($view);
-                $t = $services->translator();
-                foreach ($done['cancelled'] as $paymentId) {
-                    $orders->note($view, 'merchant_cancelled_' . md5($paymentId), $t->trans('The order was cancelled: Wajub payment %payment%, which nobody had paid, is cancelled with Wajub too, so that it can no longer go through.', ['%payment%' => $paymentId], 'Modules.Wajub.Admin'));
-                }
-                foreach ($done['refused'] as $paymentId) {
-                    $orders->note($view, 'merchant_cancelled_' . md5($paymentId), $t->trans('The order was cancelled, but Wajub would not cancel payment %payment%: it went through, or collected instalments. Its notification says what became of it; money it took for this cancelled order is refunded from the order page or the Wajub Dashboard.', ['%payment%' => $paymentId], 'Modules.Wajub.Admin'));
-                }
-                foreach ($done['unanswered'] as $paymentId) {
-                    $orders->note($view, 'merchant_cancelled_' . md5($paymentId), $t->trans('The order was cancelled, but Wajub did not answer when the shop cancelled payment %payment%: cancel it in the Wajub Dashboard, so that it cannot go through.', ['%payment%' => $paymentId], 'Modules.Wajub.Admin'));
-                }
-            } finally {
-                $lock->release($name);
+            }
+            // Nothing left that may pay it: its confirmation e-mail, held
+            // until it is paid, is never to be sent.
+            if ($done['under_way'] === [] && $done['took_money'] === [] && $done['unanswered'] === []) {
+                $services->heldConfirmations()->forgetOrder($view);
             }
         } catch (Throwable $e) {
-            $services->logger()->error('The payments of an order the merchant cancelled could not be cancelled with Wajub', ['order' => (int) $order->id, 'error' => $e->getMessage()]);
+            if (isset($services)) {
+                $services->logger()->error('The payments of an order the merchant cancelled could not be cancelled with Wajub', ['order' => $idOrder, 'error' => $e->getMessage()]);
+            }
+        } finally {
+            if ($name !== '' && $lock !== null) {
+                $lock->release($name);
+            }
         }
     }
 
@@ -1494,6 +1523,9 @@ class Wajub extends PaymentModule
         if (!$this->settingsEditable($employee)) {
             try {
                 $this->adminNotices['badge'] = (new Notices($this->services()))->sandboxBadge();
+                // No notice for this profile; the e-mails of expiring keys
+                // still go from its pages.
+                $this->keyNotices();
             } catch (Throwable $e) {
                 // A badge is never worth a broken back office.
             }
@@ -1590,9 +1622,13 @@ class Wajub extends PaymentModule
      */
     public function keyNotices(): array
     {
-        if (!$this->active || PHP_VERSION_ID < self::MIN_PHP_VERSION_ID || !$this->settingsEditable($this->context->employee)) {
+        if (!$this->active || PHP_VERSION_ID < self::MIN_PHP_VERSION_ID || !$this->settingsPageAllowed($this->context->employee)) {
             return [];
         }
+        // The e-mail of a key goes from any employee's page who may open the
+        // settings (for a shop whose scheduled task does not run); the notices
+        // go only to those who may change them.
+        $editable = $this->settingsEditable($this->context->employee);
 
         try {
             $reminders = $this->keyReminders();
@@ -1602,7 +1638,7 @@ class Wajub extends PaymentModule
             $worksOn = static function (int $idShop) use ($employee): bool {
                 return $employee instanceof Employee && $employee->hasAuthOnShop($idShop);
             };
-            foreach (KeyReminders::shownTo($due, $worksOn) as $key) {
+            foreach ($editable ? KeyReminders::shownTo($due, $worksOn) : [] as $key) {
                 $notices[] = [
                     'expired' => $key['state'] === 'expired',
                     'scope' => Shop::isFeatureActive() ? $this->scopeName($key['scope']) : '',

@@ -12,6 +12,7 @@ declare(strict_types=1);
 namespace Wajub\PrestaShop\Refund;
 
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
+use Symfony\Component\HttpKernel\Event\ResponseEvent;
 use Symfony\Component\HttpKernel\Event\TerminateEvent;
 
 if (!defined('_PS_VERSION_')) {
@@ -45,20 +46,50 @@ if (!defined('_PS_VERSION_')) {
 final class RefundFormsEnd implements EventSubscriberInterface
 {
     /**
-     * @return array<string, string>
+     * Whether the answer carries an error the page put aside for the next
+     * page (a flash message), as the session held it before Symfony saved
+     * it: once saved, it is closed, and never read again this request.
+     *
+     * @var bool
+     */
+    private $errorFlashed = false;
+
+    /**
+     * @return array<string, string|array{0: string, 1: int}>
      */
     public static function getSubscribedEvents(): array
     {
-        return ['kernel.terminate' => 'onTerminate'];
+        // Before Symfony's session listener saves the session (-1000).
+        return ['kernel.response' => ['onResponse', -999], 'kernel.terminate' => 'onTerminate'];
+    }
+
+    /**
+     * The order page catches another module's exception in
+     * actionOrderSlipAdd (in debug mode, or one PrestaShop 9 always lets
+     * through), says it in a flash message and redirects: a 302 that
+     * stopped before the refunded quantities. The answer of the request
+     * itself comes last, after those of its sub-requests.
+     */
+    public function onResponse(ResponseEvent $event): void
+    {
+        $request = $event->getRequest();
+        if (!$request->hasSession()) {
+            $this->errorFlashed = false;
+
+            return;
+        }
+        $session = $request->getSession();
+        // Never started: nothing was put aside.
+        $this->errorFlashed = $session->isStarted() && method_exists($session, 'getFlashBag') && $session->getFlashBag()->peek('error') !== [];
     }
 
     public function onTerminate(TerminateEvent $event): void
     {
         $module = \Module::getInstanceByName('wajub');
         if ($module instanceof \Wajub) {
-            // An answer that is an error (a 500 Symfony's error handler drew):
-            // PrestaShop may have stopped after the slip.
-            $module->finishRefundForms($event->getResponse()->getStatusCode() < 500);
+            // Ended well: no 500 (Symfony's error handler), and no error
+            // the order page put aside for the next page.
+            $module->finishRefundForms($event->getResponse()->getStatusCode() < 500 && !$this->errorFlashed);
         }
     }
 }

@@ -125,7 +125,7 @@ final class DbRefundStore implements RefundStore
         return $records;
     }
 
-    public function shopsWithoutSlip(string $before, int $limit): array
+    public function shopsWithoutSlip(string $after, string $before, int $limit): array
     {
         if ($limit <= 0) {
             return [];
@@ -133,7 +133,7 @@ final class DbRefundStore implements RefundStore
         $rows = \Db::getInstance()->executeS(
             'SELECT * FROM `' . $this->table() . '` WHERE `origin` = \'' . pSQL(RefundRecord::ORIGIN_PRESTASHOP) . '\' AND `id_order_slip` = 0 AND `id_order` > 0'
             . ' AND `request_key` <> \'\' AND `status` IN (\'' . implode('\', \'', array_map('pSQL', array_merge(self::LIVE, [RefundRecord::REQUESTED]))) . '\')'
-            . ' AND `date_add` < \'' . pSQL($before) . '\' ORDER BY `id_wajub_refund` ASC LIMIT ' . (int) $limit,
+            . ' AND `date_add` >= \'' . pSQL($after) . '\' AND `date_add` < \'' . pSQL($before) . '\' ORDER BY `id_wajub_refund` DESC LIMIT ' . (int) $limit,
             true,
             false
         );

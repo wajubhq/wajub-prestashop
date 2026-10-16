@@ -117,17 +117,13 @@ final class OpenPayments
      * leave it), SEEN_LATER before a new one. `$reads`: what Wajub said of
      * some of them a moment ago, by payment id (the payer's return reads the
      * order's payment first). `$cancel`: whether a payment nobody paid yet
-     * is cancelled; one left as it is keeps the order WAIT. `$leaving`: the
-     * payment the payer leaves for another method, cancelled even while
-     * Wajub is approving it (a card at its 3-D Secure challenge, a phone yet
-     * to confirm), so that it can no longer go through and the payer may
-     * pay another way; any other payment being approved is left to finish.
+     * is cancelled; one left as it is keeps the order WAIT.
      *
      * @param array<string, array{outcome: string, status: string, transaction: array<string, mixed>, unreachable?: true}> $reads
      *
      * @return array{verdict: string, statuses: array<string, string>, cancelled: list<string>}
      */
-    public function settle(OrderView $order, string $seen, array $reads = [], bool $cancel = true, string $leaving = ''): array
+    public function settle(OrderView $order, string $seen, array $reads = [], bool $cancel = true): array
     {
         $verdict = self::CLEAR;
         $statuses = [];
@@ -137,7 +133,7 @@ final class OpenPayments
             $read[$record->paymentId] = $reads[$record->paymentId] ?? $this->settlement->outcome($record, true);
             [$one, $status] = $record->state === PaymentRecord::UNCOUNTED
                 ? $this->uncounted($order, $record, $read[$record->paymentId])
-                : $this->one($order, $record, $read[$record->paymentId], $seen, $cancel, $leaving !== '' && $record->paymentId === $leaving);
+                : $this->one($order, $record, $read[$record->paymentId], $seen, $cancel);
             if ($status === self::CANCELLED_HERE) {
                 $cancelled[] = $record->paymentId;
                 $status = 'cancelled';
@@ -172,21 +168,32 @@ final class OpenPayments
 
     /**
      * The merchant cancelled the order: each of its payments still open is
-     * cancelled with Wajub, so that nobody pays a cancelled order, one being
-     * approved included. Wajub refuses one that went through or collected
-     * instalments, and may not answer:
-     * those are left as they are, their webhook says what became of them.
-     * Never moves the order: the merchant's state stands. The payments
-     * cancelled, those Wajub refused to cancel, and those it did not answer
-     * for.
+     * read, and one nobody started paying (`pending`) is cancelled with
+     * Wajub, so that nobody pays a cancelled order. One under way (a phone
+     * yet to confirm, a card at its 3-D Secure challenge) is not: Wajub's
+     * cancellation does not reach the operator or the bank, and a payment
+     * they confirm after it still goes through. Never moves the order. By
+     * payment id: those cancelled; those under way (or that moved on as
+     * they were cancelled); those that took money (went through, or
+     * collected instalments); those Wajub did not answer for. Nothing for
+     * one that ended without money, nor for another order's.
      *
-     * @return array{cancelled: list<string>, refused: list<string>, unanswered: list<string>}
+     * @return array{cancelled: list<string>, under_way: list<string>, took_money: list<string>, unanswered: list<string>}
      */
     public function cancelWithOrder(OrderView $order): array
     {
-        $done = ['cancelled' => [], 'refused' => [], 'unanswered' => []];
+        $done = ['cancelled' => [], 'under_way' => [], 'took_money' => [], 'unanswered' => []];
         foreach ($this->toSettle($order) as $record) {
             if ($record->state !== PaymentRecord::ACTIVE) {
+                continue;
+            }
+            $read = $this->settlement->outcome($record, true);
+            $kind = $this->stillOpen($order, $read);
+            if ($kind !== 'pending') {
+                if ($kind !== '') {
+                    $done[$kind][] = $record->paymentId;
+                }
+
                 continue;
             }
             try {
@@ -199,8 +206,17 @@ final class OpenPayments
 
                 continue;
             } catch (\Throwable $e) {
-                $done[$e instanceof ApiException && !Client::unanswered($e) ? 'refused' : 'unanswered'][] = $record->paymentId;
                 $this->logger->info('Open payment of an order the merchant cancelled left as it is', ['order' => $order->id, 'payment' => $record->paymentId, 'error' => $e->getMessage()]);
+                if (!$e instanceof ApiException || Client::unanswered($e)) {
+                    $done['unanswered'][] = $record->paymentId;
+
+                    continue;
+                }
+                // Refused: it moved on as it was cancelled. Said as it now is.
+                $kind = $this->stillOpen($order, $this->settlement->outcome($record, true));
+                if ($kind !== '') {
+                    $done[$kind === 'pending' ? 'under_way' : $kind][] = $record->paymentId;
+                }
 
                 continue;
             }
@@ -214,6 +230,30 @@ final class OpenPayments
         }
 
         return $done;
+    }
+
+    /**
+     * Where a payment of an order the merchant cancelled stands, from a
+     * read: 'pending' (nobody started paying it: it may be cancelled),
+     * 'under_way', 'took_money', 'unanswered', or '' (it ended without
+     * money, or it is another order's).
+     *
+     * @param array{outcome: string, status: string, transaction: array<string, mixed>, unreachable?: true} $read
+     */
+    private function stillOpen(OrderView $order, array $read): string
+    {
+        $transaction = $read['transaction'];
+        if ($transaction === []) {
+            return !empty($read['unreachable']) ? 'unanswered' : '';
+        }
+        if (Settlement::namesAnotherOrder($order, $transaction) || $read['outcome'] === Client::OUTCOME_FAILED) {
+            return '';
+        }
+        if ($read['outcome'] === Client::OUTCOME_SUCCEEDED || Ledger::openWithMoney($transaction)) {
+            return 'took_money';
+        }
+
+        return strtolower($read['status']) === 'pending' ? 'pending' : 'under_way';
     }
 
     /**
@@ -277,7 +317,7 @@ final class OpenPayments
      *
      * @return array{0: string, 1: string}
      */
-    private function one(OrderView $order, PaymentRecord $record, array $read, string $seen, bool $cancel, bool $left = false): array
+    private function one(OrderView $order, PaymentRecord $record, array $read, string $seen, bool $cancel): array
     {
         $transaction = $read['transaction'];
         if (Settlement::namesAnotherOrder($order, $transaction)) {
@@ -304,11 +344,6 @@ final class OpenPayments
         }
         if (!empty($read['unreachable'])) {
             return [self::UNCHECKED, ''];
-        }
-        if ($status === 'processing' && $cancel && $left && !Ledger::openWithMoney($transaction)) {
-            // Left by the payer for another method: cancelled, or, should
-            // Wajub refuse (it went through meanwhile), settled as it is.
-            return $this->cancel($order, $record);
         }
         if (Ledger::openWithMoney($transaction) || $status === 'processing') {
             $this->settlement->remember($record, $transaction);

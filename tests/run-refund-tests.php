@@ -629,6 +629,23 @@ check(slips_of(536) === [2500.0] && $s->refunds()->findByKey($answer['keys'][0])
 $cleanup->run(time() + Cleanup::SLIP_AFTER + 120);
 check(slips_of(536) === [2500.0], 'E20h: once');
 
+// E20i A refund the order records already (a slip the merchant made, the
+// call to Wajub timed out, then Wajub's webhook said it went through and
+// recorded nothing more): the scheduled task never makes a second slip of it.
+$s = money_shop();
+paid_order(537, ['trx_e20i' => 10000]);
+$answer = refund($s, 537, 2000);
+$GLOBALS['orders']->merchantSlip(537, 2000);
+$row = $s->refunds()->findByKey($answer['keys'][0]);
+deliver_refund($s, 'refund.succeeded', refund_data($row->refundId !== '' ? $row->refundId : 'rfd_e20i', 'trx_e20i', 2000, 'succeeded', ['metadata' => ['request_key' => $answer['keys'][0]]]));
+check(slips_of(537) === [] && $s->refunds()->findByKey($answer['keys'][0])->idOrderSlip === 0 && noted(537, 'not recorded a second time') === 1, 'E20i: its webhook records nothing more, as the order records it: ' . notes_of(537));
+$s->cleanup(static fn (int $idShop): Services => $s)->run(time() + Cleanup::SLIP_AFTER + 60);
+check(slips_of(537) === [], 'E20i: nor does the scheduled task: never a second slip of it: ' . json_encode(slips_of(537)));
+// A day on, it is no longer looked at.
+$GLOBALS['api']->calls();
+$s->cleanup(static fn (int $idShop): Services => $s)->run(time() + 2 * 86400);
+check(slips_of(537) === [] && sent() === '', 'E20i: a day on, left alone, Wajub asked nothing: ' . sent());
+
 // E21 PrestaShop makes the slip of a refund Wajub refused (it should not:
 // RefusedRefund): never refunded through Wajub, and the note tells the
 // merchant something they can do. The refusal's own words were written for

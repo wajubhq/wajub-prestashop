@@ -39,9 +39,14 @@ final class ApiReason
             // Within Wajub's sentence: "… (4,000.00 XAF) (HTTP 422)", never
             // "… (4,000.00 XAF). (HTTP 422)" once a sentence follows it.
             $message = rtrim($message, '. ');
-            $message = $code !== '' && $code !== 'http_' . $error->httpStatus
-                ? trim(sprintf('%s (%s, HTTP %d)', $message, $code, $error->httpStatus))
-                : trim(sprintf('%s (HTTP %d)', $message, $error->httpStatus));
+            // No HTTP status at all (Wajub out of reach): the code alone.
+            if ($error->httpStatus <= 0) {
+                $message = $code !== '' ? trim(sprintf('%s (%s)', $message, $code)) : $message;
+            } else {
+                $message = $code !== '' && $code !== 'http_' . $error->httpStatus
+                    ? trim(sprintf('%s (%s, HTTP %d)', $message, $code, $error->httpStatus))
+                    : trim(sprintf('%s (HTTP %d)', $message, $error->httpStatus));
+            }
         }
 
         return $message !== '' ? $message : $t->trans('no reason given', [], 'Modules.Wajub.Admin');

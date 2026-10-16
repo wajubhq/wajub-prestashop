@@ -329,28 +329,10 @@ $s->statusAnswer()->answer($GLOBALS['orders']->find(9));
 $left = $s->release()->leave($GLOBALS['orders']->find(9), 'failed');
 check($left['tone'] === 'error' && str_contains($left['message'], 'declined or failed') && $GLOBALS['orders']->noted(9, 'without paying (the payment was declined or failed)'), 'refused: the payer and the merchant read it failed');
 
-// The payer chooses another method while Wajub approves the payment (a
-// card at its 3-D Secure challenge): it is cancelled, so that it can no
-// longer go through, and the cart is the payer's again.
 $s = shop_with_order();
 read_as('trx_test_1', payment_data('trx_test_1', 'processing'));
-$GLOBALS['http']->routes['DELETE ' . API . '/payments/trx_test_1'] = [[200, ['id' => 'trx_test_1', 'status' => 'cancelled']]];
 $left = $s->release()->leave($GLOBALS['orders']->find(9), 'switch');
-check($left['to'] === Release::TO_CHECKOUT && $GLOBALS['orders']->state(9) === FakeShopOrders::CANCELED && $GLOBALS['storefront']->restored !== [] && $GLOBALS['payments']->find('trx_test_1')->status === 'cancelled', 'another method chosen while Wajub approves the payment: it is cancelled, the cart given back: ' . json_encode($left));
-// Wajub refuses: it went through meanwhile, or cannot be stopped. Never a
-// second payment: the confirmation page follows it.
-$s = shop_with_order();
-read_as('trx_test_1', payment_data('trx_test_1', 'processing'));
-$GLOBALS['http']->routes['DELETE ' . API . '/payments/trx_test_1'] = [[409, ['message' => 'This payment cannot be cancelled.']]];
-$GLOBALS['http']->routes['GET ' . API . '/payments/trx_test_1'] = [[200, payment_data('trx_test_1', 'processing')], [200, payment_data('trx_test_1', 'processing')]];
-$left = $s->release()->leave($GLOBALS['orders']->find(9), 'switch');
-check($left['to'] === Release::TO_CONFIRMATION && $GLOBALS['orders']->state(9) === FakeShopOrders::AWAITING, 'Wajub would not cancel it: never a second payment, the confirmation page follows it');
-// Only the payer's own way out: a payment being approved, left when the
-// payment form ends (cancelled, failed), is waited for.
-$s = shop_with_order();
-read_as('trx_test_1', payment_data('trx_test_1', 'processing'));
-$left = $s->release()->leave($GLOBALS['orders']->find(9), 'failed');
-check($left['to'] === Release::TO_CONFIRMATION && !in_array('DELETE ' . API . '/payments/trx_test_1', $GLOBALS['http']->routes(), true), 'a payment being approved the form says ended: waited for, never cancelled');
+check($left['to'] === Release::TO_CONFIRMATION && $GLOBALS['orders']->state(9) === FakeShopOrders::AWAITING, 'Wajub is taking the payment: never a second one, the confirmation page follows it');
 
 $s = shop_with_order();
 read_as('trx_test_1', payment_data('trx_test_1', 'pending'));

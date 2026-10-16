@@ -180,7 +180,7 @@ foreach (['being approved' => ['processing', 0, false], 'refunded in full' => ['
     $done = run_cleanup($s);
     check(($done['cancelled'] === [614]) === $cancels, "F8: a payment {$case}: " . ($cancels ? 'cancelled' : 'kept') . ' ' . json_encode($done));
     if ($status === 'processing') {
-        $why = 'This unpaid order was not cancelled: Wajub payment trx_f8_processing may still go through (Wajub status: processing). The order is looked at again once Wajub tells how the payment ended.';
+        $why = 'This unpaid order was not cancelled: Wajub payment trx_f8_processing may still go through (Wajub status: processing). The scheduled task looks at the order again until Wajub tells how the payment ended.';
         check(noted(614, $why) === 1, 'F8: kept for a payment being approved: the merchant reads why: ' . notes_of(614));
         forget_kept($s);
         run_cleanup($s);
@@ -476,23 +476,36 @@ check(strlen($s->tokens()->cron()) === 40 && $s->tokens()->cron() !== (new Wajub
 
 // --- The merchant cancels an order --------------------------------------------------------------
 
-// Its payments still open are cancelled with Wajub, so that nobody pays a
-// cancelled order; one being paid is left to its webhook; the order is
+// Its payments are read first: only one nobody started paying is cancelled
+// with Wajub, so that nobody pays a cancelled order. Wajub cannot stop one
+// being paid at the operator or the bank, and cancelling it in Wajub alone
+// would hide money it may still take: the merchant is told. The order is
 // never moved: the merchant's state stands.
 $s = money_shop();
 money_order(1200, 'trx_mc_pending');
 money_payment(1200, 'trx_mc_through', ['amount' => 10000.0]);
 money_payment(1200, 'trx_mc_down', ['amount' => 10000.0]);
+money_payment(1200, 'trx_mc_paying', ['amount' => 10000.0]);
+money_payment(1200, 'trx_mc_moved', ['amount' => 10000.0]);
+money_payment(1200, 'trx_mc_failed', ['amount' => 10000.0]);
 $GLOBALS['api']->add('trx_mc_pending', ['status' => 'pending', 'metadata' => ['order_id' => '1200']]);
 $GLOBALS['api']->add('trx_mc_through', ['status' => 'succeeded', 'amount_paid' => 10000, 'metadata' => ['order_id' => '1200']]);
 $GLOBALS['api']->add('trx_mc_down', ['status' => 'pending', 'metadata' => ['order_id' => '1200']]);
+$GLOBALS['api']->add('trx_mc_paying', ['status' => 'processing', 'metadata' => ['order_id' => '1200']]);
+$GLOBALS['api']->add('trx_mc_moved', ['status' => 'pending', 'metadata' => ['order_id' => '1200']]);
+$GLOBALS['api']->add('trx_mc_failed', ['status' => 'failed', 'metadata' => ['order_id' => '1200']]);
 $GLOBALS['api']->next['DELETE /payments/trx_mc_down'] = [[503, ['message' => 'Unavailable']], [503, ['message' => 'Unavailable']], [503, ['message' => 'Unavailable']]];
+// Read pending, then refused as cancelled: the payer approved it meanwhile.
+$GLOBALS['api']->next['DELETE /payments/trx_mc_moved'] = [[409, ['message' => 'Payment cannot be cancelled.', 'error_code' => 'payment_not_cancellable']]];
 $before = state_of(1200);
 $done = $s->openPayments()->cancelWithOrder($s->orders()->find(1200));
+$sent = $GLOBALS['api']->sent();
 $cancelled = $GLOBALS['payments']->find('trx_mc_pending');
 check($done['cancelled'] === ['trx_mc_pending'] && $GLOBALS['api']->payments['trx_mc_pending']['status'] === 'cancelled' && $cancelled->state === PaymentRecord::FINAL && $cancelled->meta(PaymentRecord::CANCELLED_BY_SHOP) !== '', 'a payment nobody paid: cancelled with Wajub, its webhook to say the shop cancelled it: ' . json_encode($done));
-check($done['refused'] === ['trx_mc_through'] && $GLOBALS['payments']->find('trx_mc_through')->state === PaymentRecord::ACTIVE, 'one that went through, its webhook lost: Wajub refuses, it is left to its webhook');
+check($done['took_money'] === ['trx_mc_through'] && !in_array('DELETE /payments/trx_mc_through', $sent, true) && $GLOBALS['payments']->find('trx_mc_through')->state === PaymentRecord::ACTIVE, 'one that went through, its webhook lost: never cancelled, the merchant told it took money');
+check($done['under_way'] === ['trx_mc_paying', 'trx_mc_moved'] && !in_array('DELETE /payments/trx_mc_paying', $sent, true) && $GLOBALS['api']->payments['trx_mc_paying']['status'] === 'processing', 'one being paid is never cancelled; one Wajub refuses to cancel is said as it now is: ' . json_encode($done));
 check($done['unanswered'] === ['trx_mc_down'] && $GLOBALS['payments']->find('trx_mc_down')->state === PaymentRecord::ACTIVE, 'one Wajub does not answer for: left, the merchant told to cancel it in the Dashboard');
-check(state_of(1200) === $before && !in_array('GET /payments/trx_mc_through', $GLOBALS['api']->sent(), true), 'the order never moved, nothing read or settled: ' . sent());
+check(!in_array('DELETE /payments/trx_mc_failed', $sent, true) && !in_array('trx_mc_failed', array_merge(...array_values($done)), true), 'one that failed: nothing to cancel, nothing to say');
+check(state_of(1200) === $before, 'the order never moved: ' . sent());
 
 done('cleanup');

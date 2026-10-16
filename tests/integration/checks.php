@@ -555,6 +555,21 @@ MODULE));
             echo "written\n";
             exit(0);
         }
+        if ($argument === 'last') {
+            // After the module, where any module installed later runs.
+            $module = Module::getInstanceByName('wajubfailinghook');
+            if (!$module instanceof Module || !Module::isInstalled('wajubfailinghook')) {
+                echo "not installed\n";
+                exit(1);
+            }
+            $hook = (int) Hook::getIdByName('actionOrderSlipAdd');
+            $shop = (int) Context::getContext()->shop->id;
+            $max = (int) Db::getInstance()->getValue('SELECT MAX(position) FROM `' . _DB_PREFIX_ . 'hook_module` WHERE id_hook = ' . $hook . ' AND id_shop = ' . $shop, false);
+            Db::getInstance()->update('hook_module', ['position' => $max + 1], 'id_hook = ' . $hook . ' AND id_module = ' . (int) $module->id);
+            $last = (int) Db::getInstance()->getValue('SELECT id_module FROM `' . _DB_PREFIX_ . 'hook_module` WHERE id_hook = ' . $hook . ' AND id_shop = ' . $shop . ' ORDER BY position DESC, id_module DESC', false);
+            echo ($last === (int) $module->id ? 'last' : 'not last') . "\n";
+            exit(0);
+        }
         if ($argument === 'first') {
             $module = Module::getInstanceByName('wajubfailinghook');
             if (!$module instanceof Module || !Module::isInstalled('wajubfailinghook')) {

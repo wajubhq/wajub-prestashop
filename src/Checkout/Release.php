@@ -137,10 +137,7 @@ final class Release
         $handOver = $this->storefront->canRestoreCart($order);
         // A payment nobody paid yet is cancelled only for a payer who gets
         // the cart back: anyone else leaves it to the confirmation page.
-        // The payment the payer leaves for another method is cancelled even
-        // while Wajub approves it: it can no longer go through, and the
-        // payer pays another way.
-        $settled = $this->open->settle($order, Settlement::SEEN_NOW, $read !== null && $current !== null ? [$current->paymentId => $read] : [], $handOver, $reason === 'switch' && $current !== null ? $current->paymentId : '');
+        $settled = $this->open->settle($order, Settlement::SEEN_NOW, $read !== null && $current !== null ? [$current->paymentId => $read] : [], $handOver);
         switch ($settled['verdict']) {
             case OpenPayments::PAID:
             case OpenPayments::WAIT:

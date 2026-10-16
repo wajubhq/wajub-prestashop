@@ -40,7 +40,8 @@ if (!defined('_PS_VERSION_')) {
  * have stopped after the slip (RefundSync::recordOnUnseenSlip()): a module
  * after this one on that hook may still fail once it reached the module.
  * The note is taken back at the end of a request whose hook reached the
- * module and that answered without an error (RefundSync::slipSeen()). A PHP
+ * module and that ended without an error, neither a 500 nor an error the
+ * order page flashed before redirecting (RefundSync::slipSeen()). A PHP
  * error ends the request at once, before any end of request: what had to
  * be recorded is recorded by then, and the note stays.
  *

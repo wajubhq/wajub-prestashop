@@ -625,6 +625,22 @@ final class RefundSync
     }
 
     /**
+     * A refund the shop asked for from the order page, that went through,
+     * and that no credit slip records once its request is long over (a PHP
+     * error ended it before PrestaShop made the slip, and no webhook came):
+     * recorded as its webhook would have (record()), for what the order does
+     * not record already. Never a second slip of money the order records.
+     */
+    public function recordLeftRefund(OrderView $order, RefundRecord $entry): void
+    {
+        $record = $this->payments->find($entry->paymentId);
+        if ($record === null || $entry->idOrderSlip > 0 || $entry->status !== 'succeeded') {
+            return;
+        }
+        $this->record($order, $record, $entry);
+    }
+
+    /**
      * A refund of a payment that paid the order, recorded on it as a credit
      * slip: the part that takes what Wajub holds for the order below what
      * the order still counts as paid (its total, less what its slips

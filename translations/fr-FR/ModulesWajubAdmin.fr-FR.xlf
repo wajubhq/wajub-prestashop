@@ -758,9 +758,9 @@
         <source>This unpaid order was cancelled: its Wajub payment was not completed within %minutes% minutes of the order being placed, and Wajub holds no money for it. Its products are back in stock.</source>
         <target>Cette commande impayée a été annulée : son paiement Wajub n’a pas été terminé dans les %minutes% minutes suivant la commande, et Wajub ne détient pas d’argent pour elle. Ses produits sont de nouveau en stock.</target>
       </trans-unit>
-      <trans-unit id="f2392a6e445f16b0986d45e509f7d29c">
-        <source>This unpaid order was not cancelled: Wajub payment %payment% may still go through (Wajub status: %status%). The order is looked at again once Wajub tells how the payment ended.</source>
-        <target>Cette commande impayée n’a pas été annulée : le paiement Wajub %payment% peut encore aboutir (statut Wajub : %status%). La commande sera réexaminée quand Wajub dira comment le paiement s’est terminé.</target>
+      <trans-unit id="a9cb298664e9d059c58f1cef850e4234">
+        <source>This unpaid order was not cancelled: Wajub payment %payment% may still go through (Wajub status: %status%). The scheduled task looks at the order again until Wajub tells how the payment ended.</source>
+        <target>Cette commande impayée n’a pas été annulée : le paiement Wajub %payment% peut encore aboutir (statut Wajub : %status%). La tâche planifiée réexamine la commande jusqu’à ce que Wajub dise comment le paiement s’est terminé.</target>
       </trans-unit>
       <trans-unit id="01ea9bc47098933204f31c921103399c">
         <source>This unpaid order was not cancelled: Wajub payment %payment%, paid in instalments, has collected %paid% so far.</source>
@@ -1946,9 +1946,13 @@
         <source>The order was cancelled: Wajub payment %payment%, which nobody had paid, is cancelled with Wajub too, so that it can no longer go through.</source>
         <target>La commande a été annulée : le paiement Wajub %payment%, que personne n’avait payé, est annulé chez Wajub aussi, pour qu’il ne puisse plus aboutir.</target>
       </trans-unit>
-      <trans-unit id="9c0e054318059fd7552d39badff3a679">
-        <source>The order was cancelled, but Wajub would not cancel payment %payment%: it went through, or collected instalments. Its notification says what became of it; money it took for this cancelled order is refunded from the order page or the Wajub Dashboard.</source>
-        <target>La commande a été annulée, mais Wajub a refusé d’annuler le paiement %payment% : il a abouti, ou a encaissé des échéances. Sa notification dit ce qu’il est devenu ; l’argent pris pour cette commande annulée se rembourse depuis la page de la commande ou le tableau de bord Wajub.</target>
+      <trans-unit id="bf6c39ce13e37f9279a8185aa343db11">
+        <source>The order was cancelled while Wajub payment %payment% was being paid: Wajub cannot stop it at the operator or the bank. Should it go through, it counts toward the order again: refund it if the customer is not to have this order.</source>
+        <target>La commande a été annulée pendant que le paiement Wajub %payment% était en cours : Wajub ne peut pas l’arrêter chez l’opérateur ou la banque. S’il aboutit, il compte de nouveau pour la commande : remboursez-le si le client ne doit pas avoir cette commande.</target>
+      </trans-unit>
+      <trans-unit id="cd0bd340aa062bcc8a09109ff732fb1a">
+        <source>The order was cancelled, but Wajub payment %payment% took money for it (it went through, or collected instalments), which counts toward the order again: refund it if the customer is not to have this order.</source>
+        <target>La commande a été annulée, mais le paiement Wajub %payment% a encaissé de l’argent pour elle (il a abouti, ou a encaissé des échéances), qui compte de nouveau pour la commande : remboursez-le si le client ne doit pas avoir cette commande.</target>
       </trans-unit>
       <trans-unit id="5e8d01bd9653e77a6f64f3d80d43ba49">
         <source>The order was cancelled, but Wajub did not answer when the shop cancelled payment %payment%: cancel it in the Wajub Dashboard, so that it cannot go through.</source>

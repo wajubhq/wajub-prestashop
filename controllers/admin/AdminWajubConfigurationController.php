@@ -219,7 +219,12 @@ class AdminWajubConfigurationController extends ModuleAdminController
     private function hideNotice(): void
     {
         // Only who is shown the notices may hide them: who may change the settings.
-        if (!$this->access('edit') || !$this->tokenIsValid()) {
+        if (!$this->access('edit')) {
+            $this->errors[] = $this->trans('You do not have permission to edit this.', [], 'Admin.Notifications.Error');
+
+            return;
+        }
+        if (!$this->tokenIsValid()) {
             $this->errors[] = $this->services()->translator()->trans('This page has expired. Reload it, then try again.', [], 'Modules.Wajub.Admin');
 
             return;
