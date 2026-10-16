@@ -528,7 +528,14 @@ check(CheckoutLocale::of('fr-FR') === 'fr' && CheckoutLocale::of('de') === '' &&
 $methodsDir = dirname(__DIR__) . '/views/img/methods';
 $svg = LogoStrip::svg(['mtn', 'orange', 'airtel'], $methodsDir);
 check(str_starts_with($svg, '<svg xmlns="http://www.w3.org/2000/svg" width="82" height="24" viewBox="0 0 82 24"><title>MTN Mobile Money, Orange Money, Airtel Money</title>'), 'the logos as one picture, as wide as they are, named: ' . substr($svg, 0, 160));
-check(str_contains($svg, '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 72 72" x="0" y="0" width="24" height="24"><image ') && str_contains($svg, 'viewBox="0.07 0.07 53.93 53.93" x="28" y="0" width="24" height="24">'), 'each 24px high, 4px apart, its own drawing in a nested picture');
+check(str_contains($svg, '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 52 53" x="0" y="0" width="24" height="24"><') && str_contains($svg, 'viewBox="0.07 0.07 53.93 53.93" x="28" y="0" width="24" height="24">'), 'each 24px high, 4px apart, its own drawing in a nested picture');
+// Every brand drawn, none a bitmap inside (Wajub's brand kit): no data in
+// the page, as PrestaShop Addons asks.
+foreach (glob($methodsDir . '/*.svg') ?: [] as $logo) {
+    $art = (string) file_get_contents($logo);
+    check(!str_contains($art, '<image') && !str_contains($art, 'data:') && !str_contains($art, 'url(#'), basename($logo) . ': drawn, no bitmap, nothing it refers to by id');
+}
+check(Methods::logoName('expressunion') === 'Express Union Mobile' && Methods::logoKind('expressunion') === Methods::MOBILE_MONEY && in_array('expressunion', Methods::logoChoices(Methods::MOBILE_MONEY), true), 'Express Union among the Mobile Money logos a merchant may choose');
 check(str_contains($svg, '<rect x="56" y="0" width="26" height="24" rx="3" fill="#fff"/>') && str_contains($svg, 'x="60" y="3" width="18" height="18"'), 'Airtel on its white badge');
 check(substr_count($svg, '<svg ') === 4 && !str_contains($svg, 'data:image/svg+xml') && !str_contains($svg, 'href="http') && !str_contains($svg, 'href="/'), 'nothing it would have to load: no address, no picture of a picture');
 foreach (array_merge(...array_map([Methods::class, 'logoChoices'], Methods::KINDS)) as $key) {

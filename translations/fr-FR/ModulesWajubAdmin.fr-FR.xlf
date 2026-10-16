@@ -1942,6 +1942,18 @@
         <source>Credit slip %slip% (%amount%) was made while the order was being updated: Wajub did not refund it. Refund the customer from the Wajub Dashboard.</source>
         <target>L’avoir %slip% (%amount%) a été créé pendant une mise à jour de la commande : Wajub ne l’a pas remboursé. Remboursez le client depuis le tableau de bord Wajub.</target>
       </trans-unit>
+      <trans-unit id="64c62c151272eeeda2226dff5487793b">
+        <source>The order was cancelled: Wajub payment %payment%, which nobody had paid, is cancelled with Wajub too, so that it can no longer go through.</source>
+        <target>La commande a été annulée : le paiement Wajub %payment%, que personne n’avait payé, est annulé chez Wajub aussi, pour qu’il ne puisse plus aboutir.</target>
+      </trans-unit>
+      <trans-unit id="9c0e054318059fd7552d39badff3a679">
+        <source>The order was cancelled, but Wajub would not cancel payment %payment%: it went through, or collected instalments. Its notification says what became of it; money it took for this cancelled order is refunded from the order page or the Wajub Dashboard.</source>
+        <target>La commande a été annulée, mais Wajub a refusé d’annuler le paiement %payment% : il a abouti, ou a encaissé des échéances. Sa notification dit ce qu’il est devenu ; l’argent pris pour cette commande annulée se rembourse depuis la page de la commande ou le tableau de bord Wajub.</target>
+      </trans-unit>
+      <trans-unit id="5e8d01bd9653e77a6f64f3d80d43ba49">
+        <source>The order was cancelled, but Wajub did not answer when the shop cancelled payment %payment%: cancel it in the Wajub Dashboard, so that it cannot go through.</source>
+        <target>La commande a été annulée, mais Wajub n’a pas répondu quand la boutique a annulé le paiement %payment% : annulez-le dans le tableau de bord Wajub, pour qu’il ne puisse pas aboutir.</target>
+      </trans-unit>
       <trans-unit id="eb3cc52fd21dcb11359c9c4e1b7da9fa">
         <source>Your Wajub key has expired.</source>
         <target>Votre clé Wajub a expiré.</target>

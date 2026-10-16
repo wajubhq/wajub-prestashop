@@ -478,7 +478,7 @@ final class Services
     public function cleanup(callable $servicesFor): Cleanup
     {
         return $this->once('cleanup', function () use ($servicesFor): Cleanup {
-            return new Cleanup($servicesFor, $this->orders(), $this->payments(), $this->state(), $this->recounts($servicesFor), $this->logger(), $this->settings()->awaitingState());
+            return new Cleanup($servicesFor, $this->orders(), $this->payments(), $this->state(), $this->recounts($servicesFor), $this->logger(), $this->settings()->awaitingState(), $this->refunds());
         });
     }
 

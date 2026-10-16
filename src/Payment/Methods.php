@@ -57,8 +57,8 @@ final class Methods
 
     /**
      * Every logo: its file in views/img/methods (an SVG, so that one picture
-     * of several can hold them: Payment\LogoStrip; the brands' artwork that
-     * is a bitmap is inside an SVG of its own), its width when drawn
+     * of several can hold them: Payment\LogoStrip; Wajub's brand kit draws
+     * each, no bitmap inside), its width when drawn
      * LOGO_HEIGHT high, whether its art has no background of its own (drawn
      * on a white badge, so a dark wordmark still reads on a dark theme), and
      * the kind of method it stands for.
@@ -66,12 +66,13 @@ final class Methods
      * @var array<string, array{0: string, 1: float|int, 2: bool, 3: string}>
      */
     private const LOGOS = [
-        'mtn' => ['mtn.svg', 24, false, self::MOBILE_MONEY],
+        'mtn' => ['mtn.svg', 23.55, false, self::MOBILE_MONEY],
         'orange' => ['orange.svg', 24, false, self::MOBILE_MONEY],
         'wave' => ['wave.svg', 24.03, false, self::MOBILE_MONEY],
-        'moov' => ['moov.svg', 26.67, false, self::MOBILE_MONEY],
+        'moov' => ['moov.svg', 23.55, false, self::MOBILE_MONEY],
+        'expressunion' => ['expressunion.svg', 24, false, self::MOBILE_MONEY],
         'airtel' => ['airtel.svg', 23.92, true, self::MOBILE_MONEY],
-        'mpesa' => ['mpesa.svg', 91.67, false, self::MOBILE_MONEY],
+        'mpesa' => ['mpesa.svg', 45.01, true, self::MOBILE_MONEY],
         'visa' => ['visa.svg', 38.22, false, self::CARD],
         'mastercard' => ['mastercard.svg', 38.8, false, self::CARD],
         'paypal' => ['paypal.svg', 39, false, self::OTHER],
@@ -85,6 +86,7 @@ final class Methods
         'orange' => 'Orange Money',
         'wave' => 'Wave',
         'moov' => 'Moov Money',
+        'expressunion' => 'Express Union Mobile',
         'airtel' => 'Airtel Money',
         'mpesa' => 'M-Pesa',
         'visa' => 'Visa',

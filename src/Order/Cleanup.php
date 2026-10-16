@@ -12,6 +12,7 @@ declare(strict_types=1);
 namespace Wajub\PrestaShop\Order;
 
 use Wajub\PrestaShop\Payment\PaymentStore;
+use Wajub\PrestaShop\Payment\RefundStore;
 use Wajub\PrestaShop\Services;
 use Wajub\PrestaShop\Storage\StateStore;
 use Wajub\PrestaShop\Support\Logger;
@@ -55,6 +56,9 @@ if (!defined('_PS_VERSION_')) {
  * the next ones get their turn. Each order under its lock, with the
  * services of its own shop: its key, its environment, its delay.
  *
+ * A run also records the refunds of the order page that Wajub made and no
+ * credit slip records a quarter of an hour on (recordSlipsLeft()).
+ *
  * One run at a time, by a lease in the module's state (StateStore::add()),
  * never a database lock: the run takes each order's lock in turn, and
  * MySQL 5.6 lets a request hold one named lock only (Support\DbLock). A
@@ -74,6 +78,12 @@ final class Cleanup
 
     /** Where the orders kept are listed, with when they may be looked at again. */
     private const KEPT = 'cleanup_kept';
+
+    /** Seconds after it was asked that a refund of the order page no slip records is recorded by a run. */
+    public const SLIP_AFTER = 900;
+
+    /** At most this many such refunds are looked at per run. */
+    private const SLIPS_PER_RUN = 5;
 
     /** The run's lease, and how long it lasts should its request die. */
     private const RUN = 'cleanup_run';
@@ -101,11 +111,15 @@ final class Cleanup
     /** @var int */
     private $awaitingState;
 
+    /** @var RefundStore|null */
+    private $refunds;
+
     /**
      * @param callable(int): Services $servicesFor the services of a shop (Wajub::servicesFor())
      */
-    public function __construct(callable $servicesFor, ShopOrders $orders, PaymentStore $payments, StateStore $state, Recounts $recounts, Logger $logger, int $awaitingState)
+    public function __construct(callable $servicesFor, ShopOrders $orders, PaymentStore $payments, StateStore $state, Recounts $recounts, Logger $logger, int $awaitingState, ?RefundStore $refunds = null)
     {
+        $this->refunds = $refunds;
         $this->servicesFor = $servicesFor;
         $this->orders = $orders;
         $this->payments = $payments;
@@ -177,6 +191,7 @@ final class Cleanup
             $this->state->set(self::KEPT, $kept, 7 * 86400);
             // What the pages ask to be read again follows what this run read.
             $this->recounts->refresh($now);
+            $this->recordSlipsLeft($now);
         } finally {
             // This run's lease only: should the run have outlasted it, the
             // next run took the lease, and keeps it.
@@ -186,6 +201,57 @@ final class Cleanup
         }
 
         return $done;
+    }
+
+    /**
+     * The refunds of the order page that Wajub made and no credit slip
+     * records, a quarter of an hour on: a PHP error ended their request
+     * before PrestaShop made the slip (another module's), and their webhook
+     * never came (a shop without one). One still under way is read from
+     * Wajub first (RefundSync::catchUp(), which records it once it went
+     * through); one that went through is recorded on a slip of its own, as
+     * the end of its request would have (RefundSync::recordWithoutSlip()).
+     * Each under its order's lock; a few per run.
+     */
+    private function recordSlipsLeft(int $now): void
+    {
+        if ($this->refunds === null) {
+            return;
+        }
+        foreach ($this->refunds->shopsWithoutSlip(date('Y-m-d H:i:s', $now - self::SLIP_AFTER), self::SLIPS_PER_RUN) as $refund) {
+            $services = ($this->servicesFor)($refund->idShop);
+            $lock = $services->lock();
+            $name = '';
+            try {
+                $orders = $services->orders();
+                $wanted = 'order:' . $orders->leadId($refund->idOrder);
+                if (!$lock->acquire($wanted, 0)) {
+                    continue;
+                }
+                $name = $wanted;
+                $order = $orders->find($refund->idOrder);
+                $fresh = $services->refunds()->findByKey($refund->requestKey);
+                if ($order === null || $fresh === null || $fresh->idOrderSlip > 0) {
+                    continue;
+                }
+                if ($fresh->status !== 'succeeded') {
+                    $services->refundSync()->catchUp($order, $fresh->environment);
+                    $order = $orders->find($order->id) ?? $order;
+                    $fresh = $services->refunds()->findByKey($refund->requestKey);
+                    if ($fresh === null || $fresh->idOrderSlip > 0 || $fresh->status !== 'succeeded') {
+                        continue;
+                    }
+                }
+                $slip = $services->refundSync()->recordWithoutSlip($order, [$fresh->requestKey]);
+                $this->logger->error('A refund Wajub made from the order page had no credit slip: the scheduled task recorded it on one of its own', ['order' => $order->id, 'refund' => $fresh->refundId, 'slip' => $slip]);
+            } catch (\Throwable $e) {
+                $this->logger->error('A refund left without a credit slip could not be recorded', ['order' => $refund->idOrder, 'error' => $e->getMessage()]);
+            } finally {
+                if ($name !== '') {
+                    $lock->release($name);
+                }
+            }
+        }
     }
 
     /**

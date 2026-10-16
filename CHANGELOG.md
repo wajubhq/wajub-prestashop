@@ -29,6 +29,10 @@ version at the top is `Wajub::VERSION` in `wajub.php` and `<version>` in
 - An unpaid order kept past the delay because Wajub is still processing its payment (a card at its 3-D Secure challenge) says so once, for the merchant.
 - The note that PrestaShop may have stopped after the credit slip of a refund stays when another module's hook fails after the module's and the page ends in an error: the merchant checks the refunded quantities before refunding again.
 - A payment read again from the shop's pages is read when due, however many payments whose reads ran out the shop keeps; one whose read failed before its order was locked is read again later, not on the next page.
+- A merchant who cancels an order has its Wajub payments still open cancelled with Wajub, so that nobody pays a cancelled order; the order says what became of each, and keeps the state the merchant chose.
+- "Use another payment method" while Wajub approves the payment (a card at its 3-D Secure challenge) cancels that payment with Wajub and gives the cart back, rather than sending the customer to a confirmation page that waits for it.
+- A refund from the order page that Wajub made but no credit slip records (a PHP error of another module ended the request first, and no webhook came) is recorded on a slip of its own by the scheduled task, a quarter of an hour on.
+- MTN MoMo, Moov Money and M-Pesa are drawn from Wajub's brand kit (no picture inside the logo files), and Express Union Mobile joins the Mobile Money logos a merchant may show.
 
 ## 1.0.0 — unreleased
 

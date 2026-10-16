@@ -125,6 +125,28 @@ final class DbRefundStore implements RefundStore
         return $records;
     }
 
+    public function shopsWithoutSlip(string $before, int $limit): array
+    {
+        if ($limit <= 0) {
+            return [];
+        }
+        $rows = \Db::getInstance()->executeS(
+            'SELECT * FROM `' . $this->table() . '` WHERE `origin` = \'' . pSQL(RefundRecord::ORIGIN_PRESTASHOP) . '\' AND `id_order_slip` = 0 AND `id_order` > 0'
+            . ' AND `request_key` <> \'\' AND `status` IN (\'' . implode('\', \'', array_map('pSQL', array_merge(self::LIVE, [RefundRecord::REQUESTED]))) . '\')'
+            . ' AND `date_add` < \'' . pSQL($before) . '\' ORDER BY `id_wajub_refund` ASC LIMIT ' . (int) $limit,
+            true,
+            false
+        );
+        $records = [];
+        foreach (is_array($rows) ? $rows : [] as $row) {
+            if (is_array($row)) {
+                $records[] = self::record($row);
+            }
+        }
+
+        return $records;
+    }
+
     public function requested(PaymentRecord $payment, string $requestKey, float $amount, string $reason): void
     {
         $requestKey = self::requestKey($requestKey);

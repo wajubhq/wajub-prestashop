@@ -474,4 +474,25 @@ check($GLOBALS['payments']->find('trx_cron_recount')->isCounted() && $GLOBALS['r
 // The cron's token: one for the whole PrestaShop, which only the shop can make.
 check(strlen($s->tokens()->cron()) === 40 && $s->tokens()->cron() !== (new Wajub\PrestaShop\Checkout\Tokens('another-secret'))->cron(), 'the cron address carries a token made with the shop\'s own secret');
 
+// --- The merchant cancels an order --------------------------------------------------------------
+
+// Its payments still open are cancelled with Wajub, so that nobody pays a
+// cancelled order; one being paid is left to its webhook; the order is
+// never moved: the merchant's state stands.
+$s = money_shop();
+money_order(1200, 'trx_mc_pending');
+money_payment(1200, 'trx_mc_through', ['amount' => 10000.0]);
+money_payment(1200, 'trx_mc_down', ['amount' => 10000.0]);
+$GLOBALS['api']->add('trx_mc_pending', ['status' => 'pending', 'metadata' => ['order_id' => '1200']]);
+$GLOBALS['api']->add('trx_mc_through', ['status' => 'succeeded', 'amount_paid' => 10000, 'metadata' => ['order_id' => '1200']]);
+$GLOBALS['api']->add('trx_mc_down', ['status' => 'pending', 'metadata' => ['order_id' => '1200']]);
+$GLOBALS['api']->next['DELETE /payments/trx_mc_down'] = [[503, ['message' => 'Unavailable']], [503, ['message' => 'Unavailable']], [503, ['message' => 'Unavailable']]];
+$before = state_of(1200);
+$done = $s->openPayments()->cancelWithOrder($s->orders()->find(1200));
+$cancelled = $GLOBALS['payments']->find('trx_mc_pending');
+check($done['cancelled'] === ['trx_mc_pending'] && $GLOBALS['api']->payments['trx_mc_pending']['status'] === 'cancelled' && $cancelled->state === PaymentRecord::FINAL && $cancelled->meta(PaymentRecord::CANCELLED_BY_SHOP) !== '', 'a payment nobody paid: cancelled with Wajub, its webhook to say the shop cancelled it: ' . json_encode($done));
+check($done['refused'] === ['trx_mc_through'] && $GLOBALS['payments']->find('trx_mc_through')->state === PaymentRecord::ACTIVE, 'one that went through, its webhook lost: Wajub refuses, it is left to its webhook');
+check($done['unanswered'] === ['trx_mc_down'] && $GLOBALS['payments']->find('trx_mc_down')->state === PaymentRecord::ACTIVE, 'one Wajub does not answer for: left, the merchant told to cancel it in the Dashboard');
+check(state_of(1200) === $before && !in_array('GET /payments/trx_mc_through', $GLOBALS['api']->sent(), true), 'the order never moved, nothing read or settled: ' . sent());
+
 done('cleanup');

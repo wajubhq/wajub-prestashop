@@ -145,6 +145,8 @@ if (PHP_SAPI !== 'cli') {
  *     php checks.php save-endpoint <id> <url>  a sandbox webhook endpoint
  *                                    registered for all shops, as "Configure
  *                                    automatically" keeps it
+ *     php checks.php cancel <id_order>  the order cancelled by an employee,
+ *                                    as from its page: its new state's id
  *     php checks.php version         the module's version PrestaShop has
  *                                    installed, and its recount page
  *     php checks.php notices <what> [value]  what the back office's notices
@@ -466,6 +468,19 @@ switch ($mode) {
         // Product returns, which "Standard refund" and "Return products" need.
         Configuration::updateValue('PS_ORDER_RETURN', (int) $argument > 0 ? 1 : 0);
         echo (int) Configuration::get('PS_ORDER_RETURN') . "\n";
+        exit(0);
+
+    case 'cancel':
+        // The order cancelled, as the merchant cancels it from its page: by an
+        // employee, the state PrestaShop's "Cancelled".
+        $order = new Order((int) $argument);
+        Context::getContext()->employee = new Employee((int) Db::getInstance()->getValue('SELECT MIN(id_employee) FROM `' . _DB_PREFIX_ . 'employee` WHERE active = 1', false));
+        $history = new OrderHistory();
+        $history->id_order = (int) $order->id;
+        $history->id_employee = (int) Context::getContext()->employee->id;
+        $history->changeIdOrderState((int) Configuration::get('PS_OS_CANCELED'), $order, true);
+        $history->add();
+        echo (int) (new Order((int) $argument))->current_state . "\n";
         exit(0);
 
     case 'deliver':

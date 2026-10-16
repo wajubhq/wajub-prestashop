@@ -76,4 +76,14 @@ interface RefundStore
 
     /** The credit slip that records the refund on its order. */
     public function linkSlip(RefundRecord $refund, int $idOrderSlip): void;
+
+    /**
+     * Refunds the shop asked for that went through, or may still (its call
+     * unanswered included), and that no credit slip records, asked before `$before` (Y-m-d H:i:s), oldest
+     * first, at most `$limit`: a PHP error ended their request before
+     * PrestaShop made the slip, and no webhook came (Order\Cleanup).
+     *
+     * @return list<RefundRecord>
+     */
+    public function shopsWithoutSlip(string $before, int $limit): array;
 }

@@ -41,6 +41,7 @@ require_once __DIR__ . '/fakes/money.php';
 require_once __DIR__ . '/fakes/refund-form.php';
 
 use PrestaShop\PrestaShop\Core\Module\Exception\ModuleErrorException;
+use Wajub\PrestaShop\Order\Cleanup;
 use Wajub\PrestaShop\Payment\RefundRecord;
 use Wajub\PrestaShop\Refund\PendingSlips;
 use Wajub\PrestaShop\Refund\RefundSync;
@@ -602,6 +603,31 @@ $slip = $GLOBALS['orders']->merchantSlip(535, 1500);
 $pending->slipAdded(535, $slip);
 $pending->finish();
 check($GLOBALS['logger']->has('PrestaShop stopped after the credit slip of a refund Wajub made: recorded on it') && !$GLOBALS['logger']->has('PrestaShop made the credit slip of a refund Wajub made without the module seeing it: recorded on it') && slips_of(535) === [], 'E20f: logged as stopped after the slip, never recorded again');
+
+// E20h A PHP Error ends the request before PrestaShop made the slip, and no
+// webhook comes (a shop without one): a quarter of an hour on, the
+// scheduled task records what Wajub refunded on a slip of its own, once.
+$s = money_shop();
+paid_order(536, ['trx_e20h' => 10000]);
+$pending = new PendingSlips();
+$pending->lock(536, $s, 10);
+$answer = refund($s, 536, 2500);
+$pending->expect(536, $s, $answer['keys']);
+// The Error: no slip, no end of request. The connection closes.
+unset($pending);
+$GLOBALS['locks']->held = [];
+check($s->refunds()->findByKey($answer['keys'][0])->idOrderSlip === 0 && slips_of(536) === [], 'E20h: nothing recorded as the request died');
+$cleanup = $s->cleanup(static fn (int $idShop): Services => $s);
+$cleanup->run(time());
+check(slips_of(536) === [], 'E20h: the scheduled task leaves it a quarter of an hour, its request may still be under way');
+// Wajub has made it meanwhile, its webhook never sent.
+foreach ($GLOBALS['api']->refunds['trx_e20h'] as $i => $made) {
+    $GLOBALS['api']->refunds['trx_e20h'][$i]['status'] = 'succeeded';
+}
+$cleanup->run(time() + Cleanup::SLIP_AFTER + 60);
+check(slips_of(536) === [2500.0] && $s->refunds()->findByKey($answer['keys'][0])->idOrderSlip > 0 && !isset($GLOBALS['locks']->held['order:536']), 'E20h: then recorded on a slip of its own, the lock let go: ' . json_encode(slips_of(536)) . ' ' . notes_of(536));
+$cleanup->run(time() + Cleanup::SLIP_AFTER + 120);
+check(slips_of(536) === [2500.0], 'E20h: once');
 
 // E21 PrestaShop makes the slip of a refund Wajub refused (it should not:
 // RefusedRefund): never refunded through Wajub, and the note tells the

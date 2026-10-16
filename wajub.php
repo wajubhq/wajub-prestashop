@@ -28,6 +28,7 @@ use Wajub\PrestaShop\Connection\KeyReminders;
 use Wajub\PrestaShop\Install\OrderStates;
 use Wajub\PrestaShop\Install\Schema;
 use Wajub\PrestaShop\Order\HeldConfirmations;
+use Wajub\PrestaShop\Order\PrestaShopOrders;
 use Wajub\PrestaShop\Payment\LogoStrip;
 use Wajub\PrestaShop\Payment\Methods;
 use Wajub\PrestaShop\Privacy\CustomerData;
@@ -1254,7 +1255,8 @@ class Wajub extends PaymentModule
 
     /**
      * An order placed with Wajub is paid: its confirmation e-mail, held as
-     * it was placed, goes to the customer now.
+     * it was placed, goes to the customer now. One the merchant cancels has
+     * its payments still open cancelled with Wajub (cancelledByMerchant()).
      *
      * @param array<string, mixed> $params
      *
@@ -1264,17 +1266,67 @@ class Wajub extends PaymentModule
     {
         $state = $params['newOrderStatus'] ?? null;
         $idOrder = (int) ($params['id_order'] ?? 0);
-        if (!$state instanceof OrderState || !$state->paid || $idOrder <= 0) {
+        if (!$state instanceof OrderState || $idOrder <= 0) {
             return;
         }
         $order = new Order($idOrder);
         if (!Validate::isLoadedObject($order) || $order->module !== $this->name) {
             return;
         }
+        if (!$state->paid) {
+            if (!PrestaShopOrders::settingState() && (int) $state->id === (int) Configuration::get('PS_OS_CANCELED')) {
+                $this->cancelledByMerchant($order);
+            }
+
+            return;
+        }
         try {
             $this->servicesFor((int) $order->id_shop)->heldConfirmations()->release($idOrder, (string) $order->payment);
         } catch (Throwable $e) {
             $this->servicesFor((int) $order->id_shop)->logger()->error('The order confirmation e-mail could not be sent', ['order' => $idOrder, 'error' => $e->getMessage()]);
+        }
+    }
+
+    /**
+     * The merchant (or another module) cancelled an order placed with Wajub:
+     * its payments still open are cancelled with Wajub, so that nobody pays
+     * a cancelled order (Order\OpenPayments::cancelWithOrder()), under the
+     * order's lock. The order says what became of each. The merchant's state
+     * stands, whatever Wajub answers; nothing here may break the change.
+     */
+    private function cancelledByMerchant(Order $order): void
+    {
+        $services = $this->servicesFor((int) $order->id_shop);
+        try {
+            $orders = $services->orders();
+            $name = 'order:' . $orders->leadId((int) $order->id);
+            $lock = $services->lock();
+            if (!$lock->acquire($name, 10)) {
+                $services->logger()->info('An order the merchant cancelled is held by another request: its payments are left to it', ['order' => (int) $order->id]);
+
+                return;
+            }
+            try {
+                $view = $orders->find((int) $order->id);
+                if ($view === null) {
+                    return;
+                }
+                $done = $services->openPayments()->cancelWithOrder($view);
+                $t = $services->translator();
+                foreach ($done['cancelled'] as $paymentId) {
+                    $orders->note($view, 'merchant_cancelled_' . md5($paymentId), $t->trans('The order was cancelled: Wajub payment %payment%, which nobody had paid, is cancelled with Wajub too, so that it can no longer go through.', ['%payment%' => $paymentId], 'Modules.Wajub.Admin'));
+                }
+                foreach ($done['refused'] as $paymentId) {
+                    $orders->note($view, 'merchant_cancelled_' . md5($paymentId), $t->trans('The order was cancelled, but Wajub would not cancel payment %payment%: it went through, or collected instalments. Its notification says what became of it; money it took for this cancelled order is refunded from the order page or the Wajub Dashboard.', ['%payment%' => $paymentId], 'Modules.Wajub.Admin'));
+                }
+                foreach ($done['unanswered'] as $paymentId) {
+                    $orders->note($view, 'merchant_cancelled_' . md5($paymentId), $t->trans('The order was cancelled, but Wajub did not answer when the shop cancelled payment %payment%: cancel it in the Wajub Dashboard, so that it cannot go through.', ['%payment%' => $paymentId], 'Modules.Wajub.Admin'));
+                }
+            } finally {
+                $lock->release($name);
+            }
+        } catch (Throwable $e) {
+            $services->logger()->error('The payments of an order the merchant cancelled could not be cancelled with Wajub', ['order' => (int) $order->id, 'error' => $e->getMessage()]);
         }
     }
 

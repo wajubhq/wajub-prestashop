@@ -285,6 +285,7 @@ final class MemoryRefundStore implements RefundStore
         $record->currency = $payment->currency;
         $record->amount = Amount::normalize($amount, $payment->currency);
         $record->reason = $reason;
+        $record->dateAdd = date('Y-m-d H:i:s');
         $this->insert($record);
     }
 
@@ -311,6 +312,19 @@ final class MemoryRefundStore implements RefundStore
             $this->rows[$refund->id]->idOrderSlip = $idOrderSlip;
             $refund->idOrderSlip = $idOrderSlip;
         }
+    }
+
+    public function shopsWithoutSlip(string $before, int $limit): array
+    {
+        $found = [];
+        foreach ($this->rows as $row) {
+            if ($row->origin === RefundRecord::ORIGIN_PRESTASHOP && $row->idOrderSlip === 0 && $row->idOrder > 0 && $row->requestKey !== ''
+                && in_array($row->status, array_merge(RefundStore::LIVE, [RefundRecord::REQUESTED]), true) && $row->dateAdd < $before) {
+                $found[] = clone $row;
+            }
+        }
+
+        return array_slice($found, 0, $limit);
     }
 
     /** The refund with this Wajub id, or the shop's with this key, as saved. */

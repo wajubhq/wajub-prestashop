@@ -721,6 +721,18 @@ lacks "never as left by the customer" "$order" 'The customer did not complete'
 expect "the order paid in instalments is kept" "$(json 'd["state"]' <<<"$(shop_checks order "$PART_ORDER" | tail -1)")" "$AWAITING"
 contains "the merchant reads why" "$(shop_checks order "$PART_ORDER" | tail -1)" 'was not cancelled'
 
+section "The merchant cancels an order"
+CANCEL_ORDER="$(place_hosted_order)"
+CANCEL_PAYMENT="$(json 'd["wajub"][0]["payment_id"]' <<<"$(shop_checks order "$CANCEL_ORDER" | tail -1)")"
+expect "its payment open on Wajub's page" "$(json 'd["status"]' <<<"$(stub_payment "$CANCEL_PAYMENT")")" pending
+expect "cancelled from its page" "$(shop_checks cancel "$CANCEL_ORDER" | tail -1)" "$(shop_checks states | tail -1 | json 'd["canceled"]')"
+expect "its payment is cancelled with Wajub too: nobody pays a cancelled order" "$(json 'd["status"]' <<<"$(stub_payment "$CANCEL_PAYMENT")")" cancelled
+order="$(shop_checks order "$CANCEL_ORDER" | tail -1)"
+contains "the merchant reads it" "$order" "Wajub payment $CANCEL_PAYMENT, which nobody had paid, is cancelled with Wajub too"
+expect "the order stays as the merchant left it" "$(json 'd["state"]' <<<"$order")" "$(shop_checks states | tail -1 | json 'd["canceled"]')"
+expect "its webhook, which follows, is accepted" "$(deliver_payment "$CANCEL_PAYMENT" payment.cancelled)" 200
+lacks "and never puts it on the customer" "$(shop_checks order "$CANCEL_ORDER" | tail -1)" 'The customer did not complete'
+
 section "Check status"
 stub_set "$PART_PAYMENT" '{"sandbox": false}'
 page="$(order_page "$PART_ORDER")"

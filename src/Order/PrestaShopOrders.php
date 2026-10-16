@@ -24,6 +24,9 @@ if (!defined('_PS_VERSION_')) {
  */
 final class PrestaShopOrders implements ShopOrders
 {
+    /** @var int how deep the module is in setState() */
+    private static $settingState = 0;
+
     public const NOTE_TABLE = 'wajub_order_note';
 
     /**
@@ -129,6 +132,16 @@ final class PrestaShopOrders implements ShopOrders
         );
     }
 
+    /**
+     * Whether the module itself is moving an order to another state now
+     * (setState()): PrestaShop's actionOrderStatusPostUpdate then hears the
+     * module, not the merchant.
+     */
+    public static function settingState(): bool
+    {
+        return self::$settingState > 0;
+    }
+
     public function setState(OrderView $order, int $stateId, bool $mail): void
     {
         if ($stateId <= 0) {
@@ -142,13 +155,18 @@ final class PrestaShopOrders implements ShopOrders
             $history = new \OrderHistory();
             $history->id_order = (int) $idOrder;
             $history->id_employee = 0;
-            // The payments the order holds go on its invoice: PrestaShop
-            // adds none for the rest, which Wajub's already are.
-            $history->changeIdOrderState($stateId, $prestashopOrder, true);
-            if ($mail) {
-                $history->addWithemail(true);
-            } else {
-                $history->add(true);
+            ++self::$settingState;
+            try {
+                // The payments the order holds go on its invoice: PrestaShop
+                // adds none for the rest, which Wajub's already are.
+                $history->changeIdOrderState($stateId, $prestashopOrder, true);
+                if ($mail) {
+                    $history->addWithemail(true);
+                } else {
+                    $history->add(true);
+                }
+            } finally {
+                --self::$settingState;
             }
         }
     }
